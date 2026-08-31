@@ -1,0 +1,9 @@
+[project]
+name = "pipeline-bdtd"
+version = "0.1.0"
+description = "Pipeline de tratamendo de dados da BDTD com foco na area de Computação, Informática e Informação; para pré-treino continuado, fine-tuning, RAG e benchmarks de avaliação"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "requests>=2.31,<3",
+]
