@@ -4,9 +4,9 @@ import argparse
 import os
 import sys
 
-from pipeline_bdtd.collector import PilotCollector
-from pipeline_bdtd.http import BdtdClient
-from pipeline_bdtd.storage import LocalStorage
+from raw.collector import PilotCollector
+from raw.http import BdtdClient
+from raw.storage import LocalStorage
 
 
 def main(argv: list[str] | None = None) -> int:
