@@ -219,3 +219,6 @@ __marimo__/
 
 # BDTD raw collection output
 /data/raw/
+
+# BDTD staging output
+/data/staging/
