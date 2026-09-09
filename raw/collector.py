@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from .common import DEFAULT_API_BASE_URL, DEFAULT_PAGE_SIZE
 from .http import BdtdAccessError, BdtdClient
+from .pdf_download import resolve_pdf_url, source_url
 from .storage import DocumentValidationError, LocalStorage
 from .validation import build_initial_query_url, initial_query_params, validate_pilot_manifest
 
@@ -24,8 +25,8 @@ class PilotCollector:
         api_base_url: str = DEFAULT_API_BASE_URL,
         log: Callable[[str], None] = print,
     ) -> None:
-        if not 1 <= target_records <= 10:
-            raise ValueError("target_records deve estar entre 1 e 10")
+        if not 1 <= target_records:
+            raise ValueError("target_records deve ser maior que 1.")
         
         if page_size < 1 or max_pages < 1:
             raise ValueError("page_size e max_pages devem ser positivos")
@@ -118,17 +119,28 @@ class PilotCollector:
             base["repository"] = _repository(raw_record, metadata)
             base["raw_record"] = raw_record
             self._log(f"{record_id}: campos detalhados recebidos: {', '.join(sorted(raw_record))}")
-        except BdtdAccessError:
-            self._log(f"{record_id}: registro indisponível; ignorando")
-            return {**base, "status": "unavailable"}
+        except BdtdAccessError as exc:
+            status = getattr(exc, "status_code", None)
+            detail = f"HTTP {status} no endpoint /record" if status else "falha de rede no endpoint /record"
+            self._log(f"{record_id}: registro indisponível ({detail}); ignorando")
+            return {**base, "status": "unavailable", "reason": "record_unavailable", "reason_detail": detail}
 
         if _is_restricted(metadata):
+            detail = str(metadata.get("access_rights", "")).strip()[:200]
             self._log(f"{record_id}: acesso restrito; ignorando")
-            return {**base, "status": "restricted"}
-        source_url = _download_url(base["raw_record"])
+            return {**base, "status": "restricted", "reason": "restricted_rights", "reason_detail": detail}
+        source_url, reason, reason_detail, landing_url = resolve_pdf_url(
+            self.client, base["raw_record"], record_id=record_id, log=self._log
+        )
         if not source_url:
-            self._log(f"{record_id}: nenhum PDF encontrado; ignorando")
-            return {**base, "status": "unavailable"}
+            self._log(f"{record_id}: nenhum PDF encontrado ({reason}); ignorando")
+            return {
+                **base,
+                "status": "unavailable",
+                "source_url": landing_url,
+                "reason": reason,
+                "reason_detail": reason_detail,
+            }
         if source_url in known_sources:
             self._log(f"{record_id}: documento duplicado; ignorando")
             return None
@@ -137,9 +149,26 @@ class PilotCollector:
             self._log(f"{record_id}: baixando {source_url}")
             response = self.client.request(source_url)
             document = self.storage.save_document(record_id, source_url, response)
-        except (BdtdAccessError, DocumentValidationError):
-            self._log(f"{record_id}: download indisponível ou inválido; ignorando")
-            return {**base, "status": "unavailable", "source_url": source_url}
+        except BdtdAccessError as exc:
+            status = getattr(exc, "status_code", None)
+            detail = f"HTTP {status} no download" if status else "falha de rede/timeout no download"
+            self._log(f"{record_id}: download inacessível ({detail}); ignorando")
+            return {
+                **base,
+                "status": "unavailable",
+                "source_url": source_url,
+                "reason": "download_unreachable",
+                "reason_detail": detail,
+            }
+        except DocumentValidationError:
+            self._log(f"{record_id}: download inválido (resposta não é um PDF válido); ignorando")
+            return {
+                **base,
+                "status": "unavailable",
+                "source_url": source_url,
+                "reason": "download_invalid",
+                "reason_detail": "resposta não passou na validação de PDF (MIME/assinatura)",
+            }
 
         if document["sha256"].casefold() in known_checksums:
             target = self.storage.documents / record_id
@@ -152,7 +181,6 @@ class PilotCollector:
         known_checksums[document["sha256"].casefold()] = record_id
         self._log(f"{record_id}: documento salvo com checksum {document['sha256']}")
         return {**base, "status": "downloaded", "document": document}
-
 
 _RECORD_FIELDS = (
     "title",
@@ -204,7 +232,7 @@ def _metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         "institution": _first_text(record, ("institution", "institution_name", "institutions")),
         "repository": _first_text(record, ("repository", "source")),
         "access_rights": _first_text(record, ("rights", "access_rights", "accessRestrictions")),
-        "source_url": _source_url(record),
+        "source_url": source_url(record),
     }
 
 
@@ -288,17 +316,6 @@ def _is_plausible_author_name(value: object) -> bool:
     return True
 
 
-def _source_url(record: Mapping[str, Any]) -> str:
-    urls = record.get("urls")
-    if isinstance(urls, list):
-        for item in urls:
-            if isinstance(item, Mapping):
-                value = item.get("url")
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-    return ""
-
-
 def _repository(record: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
     value = record.get("repository") or metadata.get("repository")
     return value.strip() if isinstance(value, str) else ""
@@ -307,20 +324,6 @@ def _repository(record: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
 def _is_restricted(metadata: Mapping[str, Any]) -> bool:
     rights = str(metadata.get("access_rights", "")).casefold()
     return any(term in rights for term in ("restricted", "embargo", "private", "closed", "access denied"))
-
-
-def _download_url(record: Mapping[str, Any]) -> str | None:
-    urls = record.get("urls")
-    if not isinstance(urls, list):
-        return None
-    for item in urls:
-        if not isinstance(item, Mapping):
-            continue
-        value = item.get("url")
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            if ".pdf" in value.casefold() or "download" in value.casefold():
-                return value
-    return None
 
 
 def _record_url(record_id: str) -> str:

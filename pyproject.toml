@@ -5,5 +5,6 @@ description = "Pipeline de tratamendo de dados da BDTD com foco na area de Compu
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "beautifulsoup4>=4.15.0",
     "requests>=2.31,<3",
 ]
