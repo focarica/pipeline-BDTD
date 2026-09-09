@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -239,14 +240,52 @@ def _text_values(value: Any) -> list[str]:
 
 def _author_values(record: Mapping[str, Any]) -> list[str]:
     authors = record.get("authors") or record.get("author")
+    if isinstance(authors, list):
+        return _extract_author_names(authors)
     if isinstance(authors, Mapping):
         values: list[str] = []
         for role in ("primary", "main", "secondary", "corporate"):
-            names = authors.get(role)
-            if isinstance(names, Mapping):
-                values.extend(str(name).strip() for name in names if str(name).strip())
-        return values
+            values.extend(_extract_author_names(authors.get(role)))
+        seen: set[str] = set()
+        unique: list[str] = []
+        for name in values:
+            if name not in seen:
+                seen.add(name)
+                unique.append(name)
+        return unique
     return _text_values(authors)
+
+
+def _extract_author_names(node: Any) -> list[str]:
+    if isinstance(node, Mapping):
+        return [name for name in (n.strip() if isinstance(n, str) else str(n).strip() for n in node) if _is_plausible_author_name(name)]
+    if isinstance(node, list):
+        values: list[str] = []
+        for item in node:
+            if isinstance(item, Mapping):
+                values.extend(_extract_author_names(item))
+            elif isinstance(item, str) and _is_plausible_author_name(item):
+                values.append(item.strip())
+        return values
+    if isinstance(node, str) and _is_plausible_author_name(node):
+        return [node.strip()]
+    return []
+
+
+def _is_plausible_author_name(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    name = value.strip()
+    if len(name) < 3:
+        return False
+    # A API às vezes classifica datas como autores secundários.
+    if re.fullmatch(r"\d{4}(-\d{2}(-\d{2})?)?", name):
+        return False
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}|\d{4}/\d{2}/\d{2}", name):
+        return False
+    if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", name):
+        return False
+    return True
 
 
 def _source_url(record: Mapping[str, Any]) -> str:
