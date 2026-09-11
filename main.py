@@ -7,7 +7,17 @@ import sys
 from raw.collector import PilotCollector
 from raw.http import BdtdClient
 from raw.storage import LocalStorage
-from staging.build import build_staging
+from staging.build import StagingReport, build_staging
+
+
+def _describe_staging_problems(report: StagingReport) -> str:
+    parts = [
+        f"{len(report.missing_files)} arquivos ausentes",
+        f"{len(report.content_type_mismatches)} content-types divergentes",
+        f"{len(report.checksum_mismatches)} checksums divergentes",
+        f"{len(report.duplicate_ids)} bdtd_id duplicados",
+    ]
+    return "staging com problemas de integridade: " + ", ".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,10 +42,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"staging: {args.staging}/staging.json")
         if not staging_report.ok:
-            print(
-                f"staging com arquivos ausentes: {len(staging_report.missing_files)}",
-                file=sys.stderr,
-            )
+            print(_describe_staging_problems(staging_report), file=sys.stderr)
             return 1
         return 0
 
@@ -67,10 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"manifesto: {args.output}/manifests/collection.json")
     print(f"staging: {args.staging}/staging.json")
     if not staging_report.ok:
-        print(
-            f"staging com arquivos ausentes: {len(staging_report.missing_files)}",
-            file=sys.stderr,
-        )
+        print(_describe_staging_problems(staging_report), file=sys.stderr)
         return 1
     return 0
 
