@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 from raw.collector import PilotCollector
@@ -32,7 +31,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="pula a coleta e monta o staging a partir do raw existente",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+    processed = subparsers.add_parser("processed", help="processa a camada processada")
+    processed.add_argument("--raw-dir", default="data/raw", help="diretório da camada bruta")
+    processed.add_argument("--output", default="data/processed", help="diretório da camada processada")
+    processed.add_argument("--target-tokens", type=int, default=1024, help="tokens por chunk (1024)")
+    processed.add_argument("--overlap", type=int, default=128, help="tokens de sobreposição (128)")
+    processed.add_argument("--min-len", type=int, default=500, help="tamanho mínimo do texto (500)")
     args = parser.parse_args(argv)
+
+    if args.command == "processed":
+        return _run_processed(args)
 
     if args.only_staging:
         try:
@@ -75,6 +85,36 @@ def main(argv: list[str] | None = None) -> int:
     print(f"staging: {args.staging}/staging.json")
     if not staging_report.ok:
         print(_describe_staging_problems(staging_report), file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_processed(args: argparse.Namespace) -> int:
+    from processed.runner import ProcessedRunner
+
+    runner = ProcessedRunner(
+        raw_root=args.raw_dir,
+        out_root=args.output,
+        target_tokens=args.target_tokens,
+        overlap=args.overlap,
+        min_len=args.min_len,
+    )
+    try:
+        _, report = runner.run()
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"o processamento falhou: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"processados {report.total} registros: {report.completed} completos, "
+        f"{report.no_text} sem texto, {report.filtered} filtrados, "
+        f"{report.duplicate} duplicados, {report.skipped} ignorados"
+    )
+    print(f"manifesto: {args.output}/manifests/processed.json")
+
+    if not report.valid:
+        for issue in report.issues:
+            print(f"validação: {issue.code}: {issue.message}", file=sys.stderr)
         return 1
     return 0
 

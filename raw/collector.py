@@ -25,8 +25,8 @@ class PilotCollector:
         api_base_url: str = DEFAULT_API_BASE_URL,
         log: Callable[[str], None] = print,
     ) -> None:
-        if not 1 <= target_records:
-            raise ValueError("target_records deve ser maior que 1.")
+        if not 1 <= target_records <= 50:
+            raise ValueError("target_records deve estar entre 1 e 50")
         
         if page_size < 1 or max_pages < 1:
             raise ValueError("page_size e max_pages devem ser positivos")
@@ -51,9 +51,9 @@ class PilotCollector:
         }
         known_sources, known_checksums = self.storage.known_documents()
         page = 1
-        self._log(f"iniciando coleta de {self.target_records} registros")
+        self._log(f"iniciando coleta com alvo de {self.target_records} documentos baixados")
 
-        while len(manifest["records"]) < self.target_records and page <= self.max_pages:
+        while _downloaded_count(manifest["records"]) < self.target_records and page <= self.max_pages:
             params = list(initial_query_params())
             params.extend((("page", str(page)), ("limit", str(self.page_size))))
             self._log(f"buscando página {page} na API")
@@ -67,7 +67,7 @@ class PilotCollector:
                 break
 
             for summary in summaries:
-                if len(manifest["records"]) >= self.target_records:
+                if _downloaded_count(manifest["records"]) >= self.target_records:
                     break
                 record = self._collect_record(summary, page, known_sources, known_checksums)
                 if record is not None:
@@ -203,6 +203,12 @@ def _search_records(payload: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
     if isinstance(candidates, list):
         return (item for item in candidates if isinstance(item, Mapping))
     return ()
+
+
+def _downloaded_count(records: Iterable[Mapping[str, Any]]) -> int:
+    """Conta os registros com documento PDF já baixado."""
+
+    return sum(record.get("status") == "downloaded" for record in records)
 
 
 def _unwrap_record(payload: Mapping[str, Any]) -> Mapping[str, Any]:

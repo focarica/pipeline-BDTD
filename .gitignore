@@ -222,3 +222,7 @@ __marimo__/
 
 # BDTD staging output
 /data/staging/
+
+# BDTD processed text output
+
+/data/processed/
