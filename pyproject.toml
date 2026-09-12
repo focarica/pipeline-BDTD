@@ -5,7 +5,18 @@ description = "Pipeline de tratamendo de dados da BDTD com foco na area de Compu
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "beautifulsoup4>=4.15.0",
-    "ftfy>=6.3.1",
+    "datasketch>=2.0.0",
+    "langdetect>=1.0.9",
+    "pypdf>=6.18.0",
     "requests>=2.31,<3",
+    "tiktoken>=0.14.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
