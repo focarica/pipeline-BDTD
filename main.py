@@ -39,10 +39,17 @@ def main(argv: list[str] | None = None) -> int:
     processed.add_argument("--target-tokens", type=int, default=1024, help="tokens por chunk (1024)")
     processed.add_argument("--overlap", type=int, default=128, help="tokens de sobreposição (128)")
     processed.add_argument("--min-len", type=int, default=500, help="tamanho mínimo do texto (500)")
+
+    curated = subparsers.add_parser("curated", help="gera a camada curated a partir do processed")
+    curated.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
+    curated.add_argument("--output", default="data/curated", help="diretório da camada curated")
     args = parser.parse_args(argv)
 
     if args.command == "processed":
         return _run_processed(args)
+
+    if args.command == "curated":
+        return _run_curated(args)
 
     if args.only_staging:
         try:
@@ -115,6 +122,28 @@ def _run_processed(args: argparse.Namespace) -> int:
     if not report.valid:
         for issue in report.issues:
             print(f"validação: {issue.code}: {issue.message}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_curated(args: argparse.Namespace) -> int:
+    from curated.build import build_curated
+
+    try:
+        report = build_curated(args.processed_dir, args.output)
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"o curated falhou: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"curated: {report.document_count} documentos, {report.chunk_count} chunks")
+    print(f"manifesto: {args.output}/manifests/curated.json")
+    print(f"datacard: {args.output}/DATACARD.md")
+
+    if not report.ok:
+        print(
+            f"curated com documentos sem chunks: {len(report.missing_chunks)}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

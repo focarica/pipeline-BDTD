@@ -73,6 +73,30 @@ Saídas em `data/processed/`:
 - `datasets/instruction.jsonl`: instrução + input por chunk para fine-tuning.
 - `manifests/processed.json`: manifesto com config, dedup e validação.
 
+## Camada curated
+
+Gera a camada curated a partir da camada processada já gerada: lê o manifesto e
+os chunks de cada documento `completed`, e desnormaliza cada chunk com os
+metadados completos do documento de origem (título, autores, resumo, assuntos,
+data, instituição, repositório, direitos de acesso e URL da fonte) — cada
+linha do dataset fica autocontida, sem necessidade de JOIN com outra tabela.
+
+```bash
+uv run python main.py curated
+```
+
+Com diretórios personalizados:
+
+```bash
+uv run python main.py curated --processed-dir data/processed --output data/curated
+```
+
+Saídas em `data/curated/`:
+
+- `datasets/chunks.jsonl`: um chunk por linha, com todos os metadados do documento embutidos.
+- `manifests/curated.json`: manifesto com contagens de documentos, chunks e documentos sem chunks encontrados em disco.
+- `DATACARD.md`: composição do corpus, parâmetros de chunking, distribuição por idioma/instituição e limitações conhecidas.
+
 ## Testes
 
 ```bash
@@ -84,3 +108,4 @@ uv run pytest
 - `data/raw/`: espelho fiel da fonte (respostas da API, PDFs originais, manifestos e proveniência). Nunca editado após a coleta.
 - `data/staging/`: derivado offline do raw (`records/<id>.json` + `staging.json`), com metadados normalizados, `content_type` real detectado do arquivo e checagem de integridade (arquivos ausentes e órfãos).
 - `data/processed/`: derivado do raw (`text/`, `chunks/`, `datasets/`, `manifests/processed.json`), com texto extraído, limpo, filtrado, deduplicado e anonimizado, pronto para pré-treino, fine-tuning e RAG.
+- `data/curated/`: derivado do processed (`datasets/chunks.jsonl`, `manifests/curated.json`, `DATACARD.md`), com chunks desnormalizados e documentados, prontos para indexação vetorial/RAG.
