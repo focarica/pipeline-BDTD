@@ -1,12 +1,19 @@
 # pipeline-BDTD
 Pipeline de tratamento de dados da BDTD com foco na área de Computação, Informática e Informação; para pré-treinamento contínuo, fine-tuning, RAG e benchmarks de avaliação
 
-## Piloto inicial
+## Esteira completa
 
-Instale o `uv`, sincronize as dependências usando Python 3.14+ e execute um piloto local:
+Instale o `uv`, sincronize as dependências usando Python 3.14+ e rode a esteira
+de ponta a ponta (coleta → staging → processed → curated):
 
 ```bash
 uv sync
+uv run python main.py all --limit 5
+```
+
+## Piloto inicial (só coleta + staging)
+
+```bash
 uv run python main.py --limit 5
 ```
 
@@ -140,6 +147,14 @@ Para escolher camadas ou bucket explicitamente:
 
 ```bash
 uv run python main.py sync --layer raw --layer curated --bucket meu-bucket
+```
+
+Uploads rodam em paralelo (`--workers`, padrão 8) com 2 tentativas por arquivo;
+arquivos ≥ 5MB logam progresso a cada 25%. Para ver o que seria enviado sem
+enviar nada:
+
+```bash
+uv run python main.py sync --dry-run
 ```
 
 ## Testes

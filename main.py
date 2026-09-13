@@ -66,6 +66,19 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--curated-dir", default="data/curated", help="diretório da camada curated")
     sync.add_argument("--workers", type=int, default=8, help="uploads em paralelo (8)")
     sync.add_argument("--dry-run", action="store_true", help="lista o que seria enviado sem enviar")
+
+    run_all = subparsers.add_parser("all", help="roda a esteira completa: coleta, staging, processed e curated")
+    run_all.add_argument("--limit", type=int, default=5, help="registros a coletar (5)")
+    run_all.add_argument("--max-pages", type=int, default=10, help="máximo de páginas (10)")
+    run_all.add_argument("--start-page", type=int, default=1, help="página inicial da busca (1)")
+    run_all.add_argument("--output", default="data/raw", help="diretório local da camada bruta")
+    run_all.add_argument("--staging", default="data/staging", help="diretório local da camada staging")
+    run_all.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
+    run_all.add_argument("--curated-dir", default="data/curated", help="diretório da camada curated")
+    run_all.add_argument("--target-tokens", type=int, default=1024, help="tokens por chunk (1024)")
+    run_all.add_argument("--overlap", type=int, default=128, help="tokens de sobreposição (128)")
+    run_all.add_argument("--min-len", type=int, default=500, help="tamanho mínimo do texto (500)")
+    run_all.add_argument("--prune", action="store_true", help="remove do raw os registros e arquivos fora do manifesto atual")
     args = parser.parse_args(argv)
 
     if args.command == "processed":
@@ -76,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "sync":
         return _run_sync(args)
+
+    if args.command == "all":
+        return _run_all(args)
 
     if args.only_staging:
         try:
@@ -120,6 +136,77 @@ def main(argv: list[str] | None = None) -> int:
     if not staging_report.ok:
         print(_describe_staging_problems(staging_report), file=sys.stderr)
         return 1
+    return 0
+
+
+def _run_all(args: argparse.Namespace) -> int:
+    from processed.runner import ProcessedRunner
+
+    from curated.build import build_curated
+
+    try:
+        client = BdtdClient()
+        collector = PilotCollector(
+            client,
+            LocalStorage(args.output),
+            target_records=args.limit,
+            max_pages=args.max_pages,
+            start_page=args.start_page,
+        )
+        _, collect_report = collector.collect()
+        staging_report = build_staging(args.output, args.staging, prune=args.prune)
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"a coleta falhou: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"coletados {collect_report.record_count} registros: "
+        f"{collect_report.downloaded_count} baixados, {collect_report.skipped_count} ignorados"
+    )
+    if not collect_report.valid:
+        for issue in collect_report.issues:
+            print(f"validação: {issue.code}: {issue.message}", file=sys.stderr)
+        return 1
+    if not staging_report.ok:
+        print(_describe_staging_problems(staging_report), file=sys.stderr)
+        return 1
+
+    runner = ProcessedRunner(
+        raw_root=args.output,
+        out_root=args.processed_dir,
+        target_tokens=args.target_tokens,
+        overlap=args.overlap,
+        min_len=args.min_len,
+    )
+    try:
+        _, processed_report = runner.run()
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"o processamento falhou: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"processados {processed_report.total} registros: {processed_report.completed} completos, "
+        f"{processed_report.no_text} sem texto, {processed_report.filtered} filtrados, "
+        f"{processed_report.duplicate} duplicados, {processed_report.skipped} ignorados"
+    )
+    if not processed_report.valid:
+        for issue in processed_report.issues:
+            print(f"validação: {issue.code}: {issue.message}", file=sys.stderr)
+        return 1
+
+    try:
+        curated_report = build_curated(args.processed_dir, args.curated_dir)
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"o curated falhou: {exc}", file=sys.stderr)
+        return 1
+    print(f"curated: {curated_report.document_count} documentos, {curated_report.chunk_count} chunks")
+    if not curated_report.ok:
+        print(
+            f"curated com documentos sem chunks: {len(curated_report.missing_chunks)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("esteira completa concluída")
     return 0
 
 
