@@ -22,20 +22,25 @@ class PilotCollector:
         target_records: int = 5,
         page_size: int = DEFAULT_PAGE_SIZE,
         max_pages: int = 10,
+        start_page: int = 1,
         api_base_url: str = DEFAULT_API_BASE_URL,
         log: Callable[[str], None] = print,
     ) -> None:
-        if not 1 <= target_records <= 50:
-            raise ValueError("target_records deve estar entre 1 e 50")
-        
+        if not 1 <= target_records <= 500:
+            raise ValueError("target_records deve estar entre 1 e 500")
+
         if page_size < 1 or max_pages < 1:
             raise ValueError("page_size e max_pages devem ser positivos")
-        
+
+        if start_page < 1:
+            raise ValueError("start_page deve ser maior que 0")
+
         self.client = client
         self.storage = storage
         self.target_records = target_records
         self.page_size = page_size
         self.max_pages = max_pages
+        self.start_page = start_page
         self.search_url = f"{api_base_url.rstrip('/')}/search"
         self.record_url = f"{api_base_url.rstrip('/')}/record"
         self._log = log
@@ -50,10 +55,11 @@ class PilotCollector:
             "records": [],
         }
         known_sources, known_checksums = self.storage.known_documents()
-        page = 1
+        page = self.start_page
+        last_page = self.start_page + self.max_pages - 1
         self._log(f"iniciando coleta com alvo de {self.target_records} documentos baixados")
 
-        while _downloaded_count(manifest["records"]) < self.target_records and page <= self.max_pages:
+        while _downloaded_count(manifest["records"]) < self.target_records and page <= last_page:
             params = list(initial_query_params())
             params.extend((("page", str(page)), ("limit", str(self.page_size))))
             self._log(f"buscando página {page} na API")
@@ -107,7 +113,6 @@ class PilotCollector:
             "metadata": metadata,
             "repository": _repository(summary, metadata),
         }
-
         try:
             full_record = self.client.get_json(
                 self.record_url,
