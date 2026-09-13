@@ -97,6 +97,43 @@ Saídas em `data/curated/`:
 - `manifests/curated.json`: manifesto com contagens de documentos, chunks e documentos sem chunks encontrados em disco.
 - `DATACARD.md`: composição do corpus, parâmetros de chunking, distribuição por idioma/instituição e limitações conhecidas.
 
+## Sincronização com o R2 (Cloudflare)
+
+Envia camadas locais para um bucket R2 (compatível com S3). Por padrão
+sincroniza `raw` e `curated` — são a fonte da verdade (os PDFs originais,
+caros de recoletar) e o produto final (o corpus pronto para consumo);
+`staging` e `processed` são reconstruíveis localmente a partir do `raw` em
+segundos/minutos, então não precisam de backup remoto.
+
+Copie `.env.example` para `.env` e preencha com as credenciais do R2 (Account
+ID e um token de API com permissão de leitura/escrita no bucket):
+
+```bash
+cp .env.example .env
+```
+
+```
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=...
+```
+
+Depois:
+
+```bash
+uv run python main.py sync
+```
+
+Um arquivo já enviado (mesmo tamanho no bucket) é pulado nas execuções
+seguintes — só o que mudou é reenviado.
+
+Para escolher camadas ou bucket explicitamente:
+
+```bash
+uv run python main.py sync --layer raw --layer curated --bucket meu-bucket
+```
+
 ## Testes
 
 ```bash

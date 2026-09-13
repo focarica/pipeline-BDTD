@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from raw.collector import PilotCollector
@@ -43,6 +44,19 @@ def main(argv: list[str] | None = None) -> int:
     curated = subparsers.add_parser("curated", help="gera a camada curated a partir do processed")
     curated.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
     curated.add_argument("--output", default="data/curated", help="diretório da camada curated")
+
+    sync = subparsers.add_parser("sync", help="sincroniza camadas locais com um bucket R2 da Cloudflare")
+    sync.add_argument(
+        "--layer",
+        action="append",
+        choices=["raw", "staging", "processed", "curated"],
+        help="camada a sincronizar (pode repetir); padrão: raw e curated",
+    )
+    sync.add_argument("--bucket", default=None, help="bucket R2 (padrão: variável de ambiente R2_BUCKET)")
+    sync.add_argument("--raw-dir", default="data/raw", help="diretório da camada bruta")
+    sync.add_argument("--staging-dir", default="data/staging", help="diretório da camada staging")
+    sync.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
+    sync.add_argument("--curated-dir", default="data/curated", help="diretório da camada curated")
     args = parser.parse_args(argv)
 
     if args.command == "processed":
@@ -50,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "curated":
         return _run_curated(args)
+
+    if args.command == "sync":
+        return _run_sync(args)
 
     if args.only_staging:
         try:
@@ -146,6 +163,48 @@ def _run_curated(args: argparse.Namespace) -> int:
         )
         return 1
     return 0
+
+
+def _run_sync(args: argparse.Namespace) -> int:
+    import dotenv
+
+    from remote.r2 import R2ConfigError, build_client, sync_directory
+
+    dotenv.load_dotenv()
+    bucket = args.bucket or os.environ.get("R2_BUCKET", "")
+    if not bucket:
+        print("informe --bucket ou defina a variável de ambiente R2_BUCKET", file=sys.stderr)
+        return 1
+
+    layers = args.layer or ["raw", "curated"]
+    layer_dirs = {
+        "raw": args.raw_dir,
+        "staging": args.staging_dir,
+        "processed": args.processed_dir,
+        "curated": args.curated_dir,
+    }
+
+    try:
+        client = build_client()
+    except R2ConfigError as exc:
+        print(f"o sync falhou: {exc}", file=sys.stderr)
+        return 1
+
+    ok = True
+    for layer in layers:
+        try:
+            report = sync_directory(client, layer_dirs[layer], bucket, layer)
+        except RuntimeError as exc:
+            print(f"o sync de {layer} falhou: {exc}", file=sys.stderr)
+            ok = False
+            continue
+        print(
+            f"{layer}: {len(report.uploaded)} enviados, {len(report.skipped)} já "
+            f"atualizados, {len(report.failed)} falharam"
+        )
+        ok = ok and report.ok
+
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

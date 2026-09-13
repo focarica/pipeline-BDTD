@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "boto3>=1.43.93",
     "datasketch>=2.0.0",
     "ftfy>=6.3.1",
     "langdetect>=1.0.9",
     "pypdf>=6.18.0",
+    "python-dotenv>=1.2.3",
     "requests>=2.31,<3",
     "tiktoken>=0.14.0",
 ]

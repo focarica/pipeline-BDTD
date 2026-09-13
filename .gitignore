@@ -226,3 +226,6 @@ __marimo__/
 # BDTD processed text output
 
 /data/processed/
+
+# BDTD curated output
+/data/curated/
