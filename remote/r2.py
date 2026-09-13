@@ -9,9 +9,11 @@ que nunca deve ser commitado).
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import time
 from typing import Any
 
 import boto3
@@ -19,7 +21,9 @@ from botocore.client import Config
 from botocore.exceptions import ClientError
 import dotenv
 
-_NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
+_MAX_ATTEMPTS = 2
+_LIST_PAGE_SIZE = 1000
+_PROGRESS_THRESHOLD = 5 * 1024 * 1024
 
 
 class R2ConfigError(RuntimeError):
@@ -31,6 +35,7 @@ class SyncReport:
     uploaded: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
     failed: tuple[str, ...] = ()
+    pending: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -79,6 +84,8 @@ def sync_directory(
     prefix: str,
     *,
     log: Callable[[str], None] = print,
+    max_workers: int = 8,
+    dry_run: bool = False,
 ) -> SyncReport:
     """Envia todo arquivo de ``local_root`` para ``bucket/prefix``.
 
@@ -86,46 +93,125 @@ def sync_directory(
     no mesmo caminho — heurística barata (evita um download só para
     conferir hash) que funciona bem aqui porque as camadas do pipeline não
     editam arquivos já escritos, só os regeneram por inteiro.
+
+    Os tamanhos remotos vêm de uma única listagem paginada do prefixo, e os
+    uploads rodam em paralelo com até 2 tentativas por arquivo. Com
+    ``dry_run=True`` nada é enviado: os arquivos diferentes entram em
+    ``pending`` no relatório.
     """
     local_root = Path(local_root)
     if not local_root.exists():
         raise RuntimeError(f"diretório local não encontrado: {local_root}")
 
     files = sorted(path for path in local_root.rglob("*") if path.is_file())
+    remote_prefix = f"{prefix.rstrip('/')}/" if prefix else ""
     log(f"sincronizando {len(files)} arquivos de {local_root} para s3://{bucket}/{prefix}")
+    remote_sizes = _list_remote_sizes(client, bucket, remote_prefix, log)
 
+    tasks = [
+        (path, f"{remote_prefix}{path.relative_to(local_root).as_posix()}")
+        for path in files
+    ]
     uploaded: list[str] = []
     skipped: list[str] = []
     failed: list[str] = []
+    pending: list[str] = []
 
-    for path in files:
-        relative = path.relative_to(local_root).as_posix()
-        key = f"{prefix.rstrip('/')}/{relative}" if prefix else relative
-        try:
-            local_size = path.stat().st_size
-            if _remote_size(client, bucket, key) == local_size:
-                skipped.append(key)
-                continue
-            client.upload_file(str(path), bucket, key)
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        results = pool.map(
+            lambda task: _sync_one(client, bucket, task[1], task[0], remote_sizes.get(task[1]), dry_run, log),
+            tasks,
+        )
+    for status, key, error in results:
+        if status == "uploaded":
             uploaded.append(key)
-            log(f"enviado: {key}")
-        except (ClientError, OSError) as exc:
+        elif status == "skipped":
+            skipped.append(key)
+        elif status == "pending":
+            pending.append(key)
+        else:
             failed.append(key)
-            log(f"falha ao enviar {key}: {exc}")
+            log(f"falha ao enviar {key}: {error}")
 
     log(
         f"sincronização concluída: {len(uploaded)} enviados, {len(skipped)} já "
-        f"atualizados, {len(failed)} falharam"
+        f"atualizados, {len(failed)} falharam, {len(pending)} pendentes (dry-run)"
     )
-    return SyncReport(uploaded=tuple(uploaded), skipped=tuple(skipped), failed=tuple(failed))
+    return SyncReport(
+        uploaded=tuple(sorted(uploaded)),
+        skipped=tuple(sorted(skipped)),
+        failed=tuple(sorted(failed)),
+        pending=tuple(sorted(pending)),
+    )
 
 
-def _remote_size(client: Any, bucket: str, key: str) -> int | None:
+def _list_remote_sizes(client: Any, bucket: str, prefix: str, log: Callable[[str], None]) -> dict[str, int]:
+    sizes: dict[str, int] = {}
+    token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": _LIST_PAGE_SIZE}
+        if token:
+            kwargs["ContinuationToken"] = token
+        try:
+            response = client.list_objects_v2(**kwargs)
+        except ClientError as exc:
+            raise RuntimeError(f"falha ao listar s3://{bucket}/{prefix}: {exc}") from exc
+        for item in response.get("Contents", []):
+            if isinstance(item.get("Key"), str):
+                sizes[item["Key"]] = int(item.get("Size", 0))
+        token = response.get("NextContinuationToken")
+        if not response.get("IsTruncated") or not token:
+            break
+    log(f"{len(sizes)} objetos remotos encontrados em s3://{bucket}/{prefix}")
+    return sizes
+
+
+def _sync_one(
+    client: Any,
+    bucket: str,
+    key: str,
+    path: Path,
+    remote_size: int | None,
+    dry_run: bool,
+    log: Callable[[str], None],
+) -> tuple[str, str, str]:
     try:
-        response = client.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in _NOT_FOUND_CODES:
-            return None
-        raise
-    return response.get("ContentLength")
+        local_size = path.stat().st_size
+    except OSError as exc:
+        return ("failed", key, str(exc))
+    if remote_size == local_size:
+        return ("skipped", key, "")
+    if dry_run:
+        return ("pending", key, "")
+    callback = _ProgressLogger(log, key, local_size) if local_size >= _PROGRESS_THRESHOLD else None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            if callback is not None:
+                client.upload_file(str(path), bucket, key, Callback=callback)
+            else:
+                client.upload_file(str(path), bucket, key)
+            log(f"enviado: {key}")
+            return ("uploaded", key, "")
+        except (ClientError, OSError) as exc:
+            error = str(exc)
+            if attempt + 1 < _MAX_ATTEMPTS:
+                time.sleep(2**attempt)
+    return ("failed", key, error)
+
+
+class _ProgressLogger:
+    """Informa o progresso de uploads grandes a cada 25% transferidos."""
+
+    def __init__(self, log: Callable[[str], None], key: str, total: int) -> None:
+        self._log = log
+        self._key = key
+        self._total = total
+        self._seen = 0
+        self._next_mark = 25
+
+    def __call__(self, chunk: int) -> None:
+        self._seen += chunk
+        percent = (self._seen / self._total) * 100 if self._total else 100
+        while percent >= self._next_mark and self._next_mark <= 100:
+            self._log(f"{self._key}: {self._next_mark}% enviado")
+            self._next_mark += 25

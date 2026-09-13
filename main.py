@@ -64,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--staging-dir", default="data/staging", help="diretório da camada staging")
     sync.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
     sync.add_argument("--curated-dir", default="data/curated", help="diretório da camada curated")
+    sync.add_argument("--workers", type=int, default=8, help="uploads em paralelo (8)")
+    sync.add_argument("--dry-run", action="store_true", help="lista o que seria enviado sem enviar")
     args = parser.parse_args(argv)
 
     if args.command == "processed":
@@ -201,14 +203,21 @@ def _run_sync(args: argparse.Namespace) -> int:
     ok = True
     for layer in layers:
         try:
-            report = sync_directory(client, layer_dirs[layer], bucket, layer)
+            report = sync_directory(
+                client,
+                layer_dirs[layer],
+                bucket,
+                layer,
+                max_workers=args.workers,
+                dry_run=args.dry_run,
+            )
         except RuntimeError as exc:
             print(f"o sync de {layer} falhou: {exc}", file=sys.stderr)
             ok = False
             continue
         print(
             f"{layer}: {len(report.uploaded)} enviados, {len(report.skipped)} já "
-            f"atualizados, {len(report.failed)} falharam"
+            f"atualizados, {len(report.failed)} falharam, {len(report.pending)} pendentes"
         )
         ok = ok and report.ok
 
