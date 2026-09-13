@@ -40,8 +40,15 @@ class BdtdClient:
         )
         self._last_request_at: float | None = None
 
-    def get_json(self, url: str, *, params: Any = None) -> Mapping[str, Any]:
-        response = self.request(url, params=params)
+    def get_json(
+        self,
+        url: str,
+        *,
+        params: Any = None,
+        timeout: tuple[float, float] | None = None,
+        max_retries: int | None = None,
+    ) -> Mapping[str, Any]:
+        response = self.request(url, params=params, timeout=timeout, max_retries=max_retries)
         try:
             payload = response.json()
         except (TypeError, ValueError) as exc:
@@ -50,19 +57,28 @@ class BdtdClient:
             raise BdtdAccessError(f"a BDTD retornou JSON que não é um objeto para {url}")
         return payload
 
-    def request(self, url: str, *, params: Any = None) -> requests.Response:
+    def request(
+        self,
+        url: str,
+        *,
+        params: Any = None,
+        timeout: tuple[float, float] | None = None,
+        max_retries: int | None = None,
+    ) -> requests.Response:
+        timeout = _TIMEOUT if timeout is None else timeout
+        limit = _MAX_RETRIES if max_retries is None else max_retries
         verification_attempted = False
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(limit + 1):
             self._wait_before_request()
             try:
                 response = self.session.get(
                     url,
                     params=params,
-                    timeout=_TIMEOUT,
+                    timeout=timeout,
                     allow_redirects=True,
                 )
             except requests.RequestException as exc:
-                if attempt >= _MAX_RETRIES:
+                if attempt >= limit:
                     raise BdtdAccessError(f"a requisição falhou para {url}: {exc}") from exc
                 time.sleep(self._backoff(attempt))
                 continue
@@ -76,7 +92,7 @@ class BdtdClient:
                 continue
 
             if response.status_code in (429, 503):
-                if attempt >= _MAX_RETRIES:
+                if attempt >= limit:
                     raise BdtdAccessError(f"a BDTD retornou HTTP {response.status_code} para {url}", status_code=response.status_code)
                 time.sleep(self._retry_delay(response, attempt))
                 continue

@@ -9,6 +9,9 @@ from bs4 import BeautifulSoup
 
 from .http import BdtdAccessError
 
+_LANDING_TIMEOUT = (5.0, 15.0)
+_LANDING_RETRIES = 1
+
 
 def direct_pdf_url(record: Mapping[str, Any]) -> str | None:
     urls = record.get("urls")
@@ -80,7 +83,9 @@ def resolve_pdf_url(
         return (None, "no_source_url", "registro sem URL de origem na API", "")
     log(f"{record_id}: buscando página da fonte {landing_url}")
     try:
-        response = client.request(landing_url)
+        response = client.request(
+            landing_url, timeout=_LANDING_TIMEOUT, max_retries=_LANDING_RETRIES
+        )
     except BdtdAccessError as exc:
         status = getattr(exc, "status_code", None)
         detail = f"HTTP {status}" if status else "falha de rede/timeout"
