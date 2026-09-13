@@ -31,6 +31,14 @@ Com diretórios personalizados:
 uv run python main.py --only-staging --output data/raw --staging data/staging
 ```
 
+O staging segue o `collection.json` como fonte autoritativa. Arquivos de coletas
+anteriores fora do manifesto atual são reportados como obsoletos/órfãos; para
+removê-los do raw, use `--prune`:
+
+```bash
+uv run python main.py --only-staging --prune
+```
+
 ## Camada processed
 
 Gera a camada processada a partir do raw já coletado: extrai o texto dos PDFs,

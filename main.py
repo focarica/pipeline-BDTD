@@ -16,6 +16,7 @@ def _describe_staging_problems(report: StagingReport) -> str:
         f"{len(report.content_type_mismatches)} content-types divergentes",
         f"{len(report.checksum_mismatches)} checksums divergentes",
         f"{len(report.duplicate_ids)} bdtd_id duplicados",
+        f"{len(report.missing_records)} registros sem arquivo",
     ]
     return "staging com problemas de integridade: " + ", ".join(parts)
 
@@ -25,12 +26,18 @@ def main(argv: list[str] | None = None) -> int:
     
     parser.add_argument("--limit", type=int, default=5, help="registros a coletar (5)")
     parser.add_argument("--max-pages", type=int, default=10, help="máximo de páginas (10)")
+    parser.add_argument("--start-page", type=int, default=1, help="página inicial da busca (1)")
     parser.add_argument("--output", default="data/raw", help="diretório local da camada bruta")
     parser.add_argument("--staging", default="data/staging", help="diretório local da camada staging")
     parser.add_argument(
         "--only-staging",
         action="store_true",
         help="pula a coleta e monta o staging a partir do raw existente",
+    )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="remove do raw os registros e arquivos fora do manifesto atual",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -70,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.only_staging:
         try:
-            staging_report = build_staging(args.output, args.staging)
+            staging_report = build_staging(args.output, args.staging, prune=args.prune)
         except (ValueError, OSError, RuntimeError) as exc:
             print(f"o staging falhou: {exc}", file=sys.stderr)
             return 1
@@ -87,9 +94,10 @@ def main(argv: list[str] | None = None) -> int:
             LocalStorage(args.output),
             target_records=args.limit,
             max_pages=args.max_pages,
+            start_page=args.start_page,
         )
         _, report = collector.collect()
-        staging_report = build_staging(args.output, args.staging)
+        staging_report = build_staging(args.output, args.staging, prune=args.prune)
 
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"a coleta falhou: {exc}", file=sys.stderr)

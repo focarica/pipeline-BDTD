@@ -20,6 +20,9 @@ class StagingReport:
     content_type_mismatches: tuple[str, ...] = ()
     checksum_mismatches: tuple[str, ...] = ()
     duplicate_ids: tuple[str, ...] = ()
+    missing_records: tuple[str, ...] = ()
+    stale_records: tuple[str, ...] = ()
+    pruned: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -28,6 +31,7 @@ class StagingReport:
             or self.content_type_mismatches
             or self.checksum_mismatches
             or self.duplicate_ids
+            or self.missing_records
         )
 
 
@@ -56,24 +60,34 @@ def build_staging(
     staging_root: str | Path,
     *,
     log: Callable[[str], None] = print,
+    prune: bool = False,
 ) -> StagingReport:
     raw_root = Path(raw_root)
     staging_root = Path(staging_root)
     records_dir = staging_root / "records"
     records_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_records = sorted((raw_root / "manifests" / "records").glob("*.json"))
-    log(f"montando staging a partir de {len(raw_records)} registros do raw")
+    collection_ids = _collection_ids(raw_root)
+    log(f"montando staging a partir de {len(collection_ids)} registros do manifesto da coleta")
+
+    on_disk = _index_record_files(raw_root, log)
+    collection_set = set(collection_ids)
+    missing_records = sorted(collection_set - set(on_disk))
+    for record_id in missing_records:
+        log(f"registro do manifesto sem arquivo no raw: {record_id}")
+    stale = sorted(
+        (record_id, path)
+        for record_id, (path, _record) in on_disk.items()
+        if record_id not in collection_set
+    )
+    stale_records = [record_id for record_id, _ in stale]
 
     staged: list[_StagingRecord] = []
-    for path in raw_records:
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            log(f"registro ilegível, ignorando: {path.name}")
+    for record_id in collection_ids:
+        entry = on_disk.get(record_id)
+        if entry is None:
             continue
-        if not isinstance(record, Mapping):
-            continue
+        _path, record = entry
         staged.append(_stage_record(raw_root, record, log))
 
     staged, duplicate_ids = _drop_duplicate_ids(staged, log)
@@ -113,6 +127,11 @@ def build_staging(
     except (OSError, ValueError):
         query = ""
 
+    pruned: list[str] = []
+    if prune:
+        pruned = _prune_stale(raw_root, stale, orphans, log)
+        orphans = [path for path in orphans if path not in set(pruned)]
+
     downloaded = sum(1 for e in staged if e.data["status"] == "downloaded")
     manifest = {
         "query": query,
@@ -126,6 +145,9 @@ def build_staging(
             "content_type_mismatches": mismatches,
             "checksum_mismatches": checksum_mismatches,
             "duplicate_ids": duplicate_ids,
+            "missing_records": missing_records,
+            "stale_records": stale_records,
+            "pruned": pruned,
         },
     }
     (staging_root / "staging.json").write_text(
@@ -138,12 +160,17 @@ def build_staging(
         f"{len(missing)} arquivos ausentes, {len(orphans)} órfãos, "
         f"{len(mismatches)} content-types divergentes, "
         f"{len(checksum_mismatches)} checksums divergentes, "
-        f"{len(duplicate_ids)} bdtd_id duplicados"
+        f"{len(duplicate_ids)} bdtd_id duplicados, "
+        f"{len(missing_records)} registros sem arquivo, "
+        f"{len(stale_records)} registros obsoletos"
+        + (f", {len(pruned)} removidos" if prune else "")
     )
     for path in missing:
         log(f"arquivo ausente: {path}")
     for path in orphans:
         log(f"arquivo órfão: {path}")
+    for record_id in stale_records:
+        log(f"registro obsoleto (fora do manifesto atual): {record_id}")
     return StagingReport(
         record_count=len(staged),
         downloaded_count=downloaded,
@@ -152,7 +179,84 @@ def build_staging(
         content_type_mismatches=tuple(mismatches),
         checksum_mismatches=tuple(checksum_mismatches),
         duplicate_ids=tuple(duplicate_ids),
+        missing_records=tuple(missing_records),
+        stale_records=tuple(stale_records),
+        pruned=tuple(pruned),
     )
+
+
+def _collection_ids(raw_root: Path) -> list[str]:
+    try:
+        collection = json.loads((raw_root / "manifests" / "collection.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"manifesto da coleta ausente ou inválido: {exc}") from exc
+    records = collection.get("records") if isinstance(collection, Mapping) else None
+    if not isinstance(records, list):
+        raise RuntimeError("manifest.records deve ser uma lista")
+    return [str(record["bdtd_id"]) for record in records if isinstance(record, Mapping) and record.get("bdtd_id")]
+
+
+def _index_record_files(
+    raw_root: Path, log: Callable[[str], None]
+) -> dict[str, tuple[Path, Mapping[str, Any]]]:
+    index: dict[str, tuple[Path, Mapping[str, Any]]] = {}
+    for path in sorted((raw_root / "manifests" / "records").glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log(f"registro ilegível, ignorando: {path.name}")
+            continue
+        if not isinstance(record, Mapping):
+            continue
+        record_id = record.get("bdtd_id")
+        if not isinstance(record_id, str) or not record_id:
+            log(f"registro sem bdtd_id, ignorando: {path.name}")
+            continue
+        index[record_id] = (path, record)
+    return index
+
+
+def _prune_stale(
+    raw_root: Path,
+    stale: list[tuple[str, Path]],
+    orphans: list[str],
+    log: Callable[[str], None],
+) -> list[str]:
+    removed: list[str] = []
+    for _record_id, path in stale:
+        _safe_unlink(raw_root, path, log)
+        removed.append(str(path.relative_to(raw_root)))
+    for relative in orphans:
+        _safe_unlink(raw_root, raw_root / relative, log)
+        removed.append(relative)
+    _remove_empty_dirs(raw_root / "documents", log)
+    return sorted(removed)
+
+
+def _safe_unlink(raw_root: Path, path: Path, log: Callable[[str], None]) -> None:
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(raw_root.resolve())
+    except (OSError, ValueError):
+        log(f"remoção recusada fora do raw: {path}")
+        return
+    try:
+        resolved.unlink()
+        log(f"removido: {path.relative_to(raw_root)}")
+    except OSError as exc:
+        log(f"falha ao remover {path}: {exc}")
+
+
+def _remove_empty_dirs(root: Path, log: Callable[[str], None]) -> None:
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_dir():
+            try:
+                path.rmdir()
+                log(f"diretório vazio removido: {path.relative_to(root.parent.parent)}")
+            except OSError:
+                pass
 
 
 def _drop_duplicate_ids(
