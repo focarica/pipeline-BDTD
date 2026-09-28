@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -34,7 +34,9 @@ class LocalStorage:
 
     def save_record(self, record: Mapping[str, Any]) -> Path:
         record_id = _safe_name(str(record["bdtd_id"]))
-        return self._save_json(self.records / f"{record_id}.json", record)
+        stored_record = dict(record)
+        stored_record.setdefault("checked_at", datetime.now(timezone.utc).isoformat())
+        return self._save_json(self.records / f"{record_id}.json", stored_record)
 
     def save_collection(self, manifest: Mapping[str, Any]) -> Path:
         return self._save_json(self.manifests / "collection.json", manifest)
@@ -59,6 +61,53 @@ class LocalStorage:
                 if isinstance(checksum, str):
                     checksums[checksum.casefold()] = record_id
         return sources, checksums
+
+    def known_downloaded_ids(self) -> set[str]:
+        return self._record_ids_with_status("downloaded")
+
+    def known_downloaded_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for path in sorted(self.records.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict) and record.get("status") == "downloaded":
+                records.append(record)
+        return records
+
+    def known_dead_ends(self) -> dict[str, str]:
+        """Return recent failures still inside their retry cooldown."""
+
+        now = datetime.now(timezone.utc)
+        dead_ends: dict[str, str] = {}
+        for path in self.records.glob("*.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if record.get("status") not in {"unavailable", "restricted"}:
+                continue
+            record_id = record.get("bdtd_id")
+            if not isinstance(record_id, str) or not record_id:
+                continue
+            reason = str(record.get("reason") or record.get("status"))
+            checked_at = _record_checked_at(record, path)
+            if checked_at + _dead_end_cooldown(reason) > now:
+                dead_ends[record_id] = reason
+        return dead_ends
+
+    def _record_ids_with_status(self, status: str) -> set[str]:
+        record_ids: set[str] = set()
+        for path in self.records.glob("*.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            record_id = record.get("bdtd_id")
+            if record.get("status") == status and isinstance(record_id, str):
+                record_ids.add(record_id)
+        return record_ids
 
     def save_document(
         self,
@@ -123,3 +172,31 @@ def _filename_from_response(response: Any, record_id: str) -> str:
     candidate = unquote(match.group(1).strip()) if match else ""
     candidate = Path(urlparse(candidate).path).name if candidate else ""
     return _safe_name(candidate or f"{record_id}.pdf")
+
+
+def _record_checked_at(record: Mapping[str, Any], path: Path) -> datetime:
+    value = record.get("checked_at")
+    if isinstance(value, str):
+        try:
+            checked_at = datetime.fromisoformat(value)
+            if checked_at.tzinfo is None:
+                return checked_at.replace(tzinfo=timezone.utc)
+            return checked_at.astimezone(timezone.utc)
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _dead_end_cooldown(reason: str) -> timedelta:
+    if reason == "record_batch_unavailable":
+        return timedelta(0)
+    if reason in {"landing_antibot", "landing_js_gate"}:
+        return timedelta(days=7)
+    if reason in {
+        "restricted_rights",
+        "landing_no_pdf_link",
+        "download_invalid",
+        "no_source_url",
+    }:
+        return timedelta(days=30)
+    return timedelta(hours=6)

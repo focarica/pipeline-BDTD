@@ -21,16 +21,17 @@ class PilotCollector:
         *,
         target_records: int = 5,
         page_size: int = DEFAULT_PAGE_SIZE,
-        max_pages: int = 10,
+        max_pages: int = 100,
+        record_batch_size: int = 25,
         start_page: int = 1,
         api_base_url: str = DEFAULT_API_BASE_URL,
         log: Callable[[str], None] = print,
     ) -> None:
-        if not 1 <= target_records <= 500:
-            raise ValueError("target_records deve estar entre 1 e 500")
+        if not 1 <= target_records <= 5000:
+            raise ValueError("target_records deve estar entre 1 e 5000")
 
-        if page_size < 1 or max_pages < 1:
-            raise ValueError("page_size e max_pages devem ser positivos")
+        if page_size < 1 or max_pages < 1 or record_batch_size < 1:
+            raise ValueError("page_size, max_pages e record_batch_size devem ser positivos")
 
         if start_page < 1:
             raise ValueError("start_page deve ser maior que 0")
@@ -40,6 +41,7 @@ class PilotCollector:
         self.target_records = target_records
         self.page_size = page_size
         self.max_pages = max_pages
+        self.record_batch_size = record_batch_size
         self.start_page = start_page
         self.search_url = f"{api_base_url.rstrip('/')}/search"
         self.record_url = f"{api_base_url.rstrip('/')}/record"
@@ -50,11 +52,18 @@ class PilotCollector:
         manifest: dict[str, Any] = {
             "query": query_url,
             "query_params": [{"name": name, "value": value} for name, value in initial_query_params()],
+            "search_api_url": self.search_url,
+            "page_size": self.page_size,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "pages": [],
             "records": [],
+            "warnings": [],
         }
         known_sources, known_checksums = self.storage.known_documents()
+        known_downloaded_ids = self.storage.known_downloaded_ids()
+        known_dead_ends = self.storage.known_dead_ends()
+        attempted_ids: set[str] = set()
+        seen_page_fingerprints: set[tuple[str, ...]] = set()
         page = self.start_page
         last_page = self.start_page + self.max_pages - 1
         self._log(f"iniciando coleta com alvo de {self.target_records} documentos baixados")
@@ -72,31 +81,101 @@ class PilotCollector:
                 self._log("nenhum registro retornado; encerrando busca")
                 break
 
+            page_ids = tuple(
+                sorted(record_id for item in summaries if (record_id := _record_id(item)))
+            )
+            if page_ids in seen_page_fingerprints:
+                warning = (
+                    f"a API repetiu os mesmos registros na página {page}; "
+                    "a janela de paginação pode ter atingido o limite do serviço"
+                )
+                manifest["warnings"].append(warning)
+                self._log(f"{warning}; reduza a página inicial ou restrinja a busca")
+                break
+            seen_page_fingerprints.add(page_ids)
+
+            pending: list[Mapping[str, Any]] = []
             for summary in summaries:
+                record_id = _record_id(summary)
+                if not record_id:
+                    self._log("registro sem identificador; ignorando")
+                    continue
+                if record_id in attempted_ids:
+                    self._log(f"{record_id}: registro repetido entre páginas; ignorando")
+                    continue
+                attempted_ids.add(record_id)
+                if record_id in known_downloaded_ids:
+                    self._log(f"{record_id}: documento já coletado anteriormente; ignorando")
+                    continue
+                if record_id in known_dead_ends:
+                    self._log(
+                        f"{record_id}: falha recente em cooldown "
+                        f"({known_dead_ends[record_id]}); ignorando"
+                    )
+                    continue
+                pending.append(summary)
+
+            for offset in range(0, len(pending), self.record_batch_size):
                 if _downloaded_count(manifest["records"]) >= self.target_records:
                     break
-                record = self._collect_record(summary, page, known_sources, known_checksums)
-                if record is not None:
-                    manifest["records"].append(record)
-                    self.storage.save_record(record)
+                batch = pending[offset : offset + self.record_batch_size]
+                batch_ids = [record_id for item in batch if (record_id := _record_id(item))]
+                detailed_records, batch_errors = self._fetch_record_batch(batch_ids)
+                for summary in batch:
+                    if _downloaded_count(manifest["records"]) >= self.target_records:
+                        break
+                    record_id = _record_id(summary)
+                    if not record_id:
+                        continue
+                    record = self._collect_record(
+                        summary,
+                        page,
+                        detailed_records.get(record_id),
+                        batch_errors.get(record_id),
+                        known_sources,
+                        known_checksums,
+                    )
+                    if record is not None:
+                        manifest["records"].append(record)
+                        self.storage.save_record(record)
             page += 1
 
             if len(summaries) < self.page_size:
                 break
 
         manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
+        run_report = validate_pilot_manifest(manifest, min_records=0)
+        run_records = manifest["records"]
+        manifest["run_summary"] = {
+            "record_count": run_report.record_count,
+            "downloaded_count": run_report.downloaded_count,
+            "skipped_count": run_report.skipped_count,
+        }
+
+        cumulative_records = {
+            str(record["bdtd_id"]): record
+            for record in self.storage.known_downloaded_records()
+            if record.get("bdtd_id")
+        }
+        for record in run_records:
+            record_id = record.get("bdtd_id")
+            if isinstance(record_id, str) and record_id:
+                cumulative_records[record_id] = record
+        manifest["records"] = list(cumulative_records.values())
         self.storage.save_collection(manifest)
-        report = validate_pilot_manifest(manifest)
         self._log(
-            f"coleta encerrada: {report.record_count} registros, "
-            f"{report.downloaded_count} baixados, {report.skipped_count} ignorados"
+            f"coleta encerrada: {run_report.record_count} registros nesta execução, "
+            f"{run_report.downloaded_count} baixados, {run_report.skipped_count} ignorados; "
+            f"{len(cumulative_records)} documentos baixados mantidos no manifesto"
         )
-        return manifest, report
+        return manifest, run_report
 
     def _collect_record(
         self,
         summary: Mapping[str, Any],
         page: int,
+        raw_record: Mapping[str, Any] | None,
+        record_error: BdtdAccessError | None,
         known_sources: dict[str, str],
         known_checksums: dict[str, str],
     ) -> dict[str, Any] | None:
@@ -113,22 +192,27 @@ class PilotCollector:
             "metadata": metadata,
             "repository": _repository(summary, metadata),
         }
-        try:
-            full_record = self.client.get_json(
-                self.record_url,
-                params=[("id", record_id), *[("field[]", field) for field in _RECORD_FIELDS]],
+        if record_error is not None or raw_record is None:
+            status = getattr(record_error, "status_code", None)
+            transient_failure = (
+                status is None
+                or status in {408, 429}
+                or status >= 500
             )
-            raw_record = _unwrap_record(full_record)
-            metadata = _metadata(raw_record)
-            base["metadata"] = metadata
-            base["repository"] = _repository(raw_record, metadata)
-            base["raw_record"] = raw_record
-            self._log(f"{record_id}: campos detalhados recebidos: {', '.join(sorted(raw_record))}")
-        except BdtdAccessError as exc:
-            status = getattr(exc, "status_code", None)
-            detail = f"HTTP {status} no endpoint /record" if status else "falha de rede no endpoint /record"
+            detail = (
+                f"HTTP {status} no endpoint /record"
+                if status
+                else "falha na consulta em lote ao endpoint /record"
+            )
             self._log(f"{record_id}: registro indisponível ({detail}); ignorando")
-            return {**base, "status": "unavailable", "reason": "record_unavailable", "reason_detail": detail}
+            reason = "record_batch_unavailable" if transient_failure else "record_unavailable"
+            return {**base, "status": "unavailable", "reason": reason, "reason_detail": detail}
+
+        metadata = _metadata(raw_record)
+        base["metadata"] = metadata
+        base["repository"] = _repository(raw_record, metadata)
+        base["raw_record"] = raw_record
+        self._log(f"{record_id}: campos detalhados recebidos: {', '.join(sorted(raw_record))}")
 
         if _is_restricted(metadata):
             detail = str(metadata.get("access_rights", "")).strip()[:200]
@@ -187,7 +271,83 @@ class PilotCollector:
         self._log(f"{record_id}: documento salvo com checksum {document['sha256']}")
         return {**base, "status": "downloaded", "document": document}
 
+    def _fetch_record_batch(
+        self, record_ids: list[str]
+    ) -> tuple[dict[str, Mapping[str, Any]], dict[str, BdtdAccessError]]:
+        if not record_ids:
+            return {}, {}
+        params = [("id[]", record_id) for record_id in record_ids]
+        params.extend(("field[]", field) for field in _RECORD_FIELDS)
+        try:
+            payload = self.client.get_json(self.record_url, params=params)
+        except BdtdAccessError as exc:
+            if len(record_ids) > 1 and getattr(exc, "status_code", None) in (400, 414):
+                self._log(
+                    "a API recusou os parâmetros em lote; buscando os registros "
+                    "individualmente como fallback"
+                )
+                return self._fetch_records_individually(record_ids)
+            self._log(f"falha ao buscar lote de {len(record_ids)} registros: {exc}")
+            return {}, {record_id: exc for record_id in record_ids}
+
+        records: dict[str, Mapping[str, Any]] = {}
+        candidates = payload.get("records")
+        if isinstance(candidates, list):
+            for item in candidates:
+                if isinstance(item, Mapping):
+                    record_id = _record_id(item)
+                    if record_id:
+                        records[record_id] = item
+
+        missing_ids = [record_id for record_id in record_ids if record_id not in records]
+        errors: dict[str, BdtdAccessError] = {}
+        if missing_ids:
+            self._log(
+                f"a resposta em lote omitiu {len(missing_ids)} registro(s); "
+                "tentando esses IDs individualmente"
+            )
+            fallback_records, fallback_errors = self._fetch_records_individually(missing_ids)
+            records.update(fallback_records)
+            errors.update(fallback_errors)
+            for record_id in missing_ids:
+                if record_id not in records and record_id not in errors:
+                    errors[record_id] = BdtdAccessError(
+                        f"a API não retornou o registro {record_id} no lote"
+                    )
+        return records, errors
+
+    def _fetch_records_individually(
+        self, record_ids: list[str]
+    ) -> tuple[dict[str, Mapping[str, Any]], dict[str, BdtdAccessError]]:
+        records: dict[str, Mapping[str, Any]] = {}
+        errors: dict[str, BdtdAccessError] = {}
+        for record_id in record_ids:
+            try:
+                payload = self.client.get_json(
+                    self.record_url,
+                    params=[("id", record_id), *(('field[]', field) for field in _RECORD_FIELDS)],
+                )
+            except BdtdAccessError as exc:
+                errors[record_id] = exc
+                self._log(f"{record_id}: fallback individual /record falhou: {exc}")
+                continue
+            candidates = payload.get("records")
+            if isinstance(candidates, list) and candidates and isinstance(candidates[0], Mapping):
+                returned_id = _record_id(candidates[0])
+                if returned_id == record_id:
+                    records[record_id] = candidates[0]
+                else:
+                    errors[record_id] = BdtdAccessError(
+                        f"a API retornou um ID inesperado para {record_id}"
+                    )
+            else:
+                errors[record_id] = BdtdAccessError(
+                    f"a API não retornou o registro {record_id}"
+                )
+        return records, errors
+
 _RECORD_FIELDS = (
+    "id",
     "title",
     "authors",
     "abstract",
@@ -214,13 +374,6 @@ def _downloaded_count(records: Iterable[Mapping[str, Any]]) -> int:
     """Conta os registros com documento PDF já baixado."""
 
     return sum(record.get("status") == "downloaded" for record in records)
-
-
-def _unwrap_record(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    records = payload.get("records")
-    if isinstance(records, list) and records and isinstance(records[0], Mapping):
-        return records[0]
-    return {}
 
 
 def _record_id(record: Mapping[str, Any]) -> str | None:

@@ -38,23 +38,14 @@ class ValidationReport:
 
 
 def initial_query_params() -> tuple[tuple[str, str], ...]:
-    """Retorna a busca inicial como parâmetros ``AllFields`` repetidos em OR."""
+    """Retorna os parâmetros aceitos pela API para a busca OR em ``AllFields``."""
 
-    params: list[tuple[str, str]] = [("join", "AND"), ("bool0[]", "OR")]
-    
-    for term in INITIAL_QUERY_TERMS:
-        params.extend((("lookfor0[]", term), ("type0[]", "AllFields")))
-    
-    params.extend(
-        (
-            ("illustration", "-1"),
-            ("daterange[]", "publishDate"),
-            ("publishDatefrom", ""),
-            ("publishDateto", ""),
-            ("sort", "year"),
-        )
+    terms = " OR ".join(INITIAL_QUERY_TERMS)
+    return (
+        ("lookfor", terms),
+        ("type", "AllFields"),
+        ("sort", "year"),
     )
-    return tuple(params)
 
 
 def build_initial_query_url(base_url: str = DEFAULT_SEARCH_URL) -> str:

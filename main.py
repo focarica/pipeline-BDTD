@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pipeline da BDTD.")
     
     parser.add_argument("--limit", type=int, default=5, help="registros a coletar (5)")
-    parser.add_argument("--max-pages", type=int, default=10, help="máximo de páginas (10)")
+    parser.add_argument("--max-pages", type=int, default=100, help="máximo de páginas (100)")
     parser.add_argument("--start-page", type=int, default=1, help="página inicial da busca (1)")
     parser.add_argument("--output", default="data/raw", help="diretório local da camada bruta")
     parser.add_argument("--staging", default="data/staging", help="diretório local da camada staging")
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_all = subparsers.add_parser("all", help="roda a esteira completa: coleta, staging, processed e curated")
     run_all.add_argument("--limit", type=int, default=5, help="registros a coletar (5)")
-    run_all.add_argument("--max-pages", type=int, default=10, help="máximo de páginas (10)")
+    run_all.add_argument("--max-pages", type=int, default=100, help="máximo de páginas (100)")
     run_all.add_argument("--start-page", type=int, default=1, help="página inicial da busca (1)")
     run_all.add_argument("--output", default="data/raw", help="diretório local da camada bruta")
     run_all.add_argument("--staging", default="data/staging", help="diretório local da camada staging")
