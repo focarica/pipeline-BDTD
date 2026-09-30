@@ -60,6 +60,8 @@ class PilotCollector:
             "warnings": [],
         }
         known_sources, known_checksums = self.storage.known_documents()
+        for source_url in list(known_sources):
+            known_sources.setdefault(_canonical_source_url(source_url), known_sources[source_url])
         known_downloaded_ids = self.storage.known_downloaded_ids()
         known_dead_ends = self.storage.known_dead_ends()
         attempted_ids: set[str] = set()
@@ -87,10 +89,14 @@ class PilotCollector:
             if page_ids in seen_page_fingerprints:
                 warning = (
                     f"a API repetiu os mesmos registros na página {page}; "
-                    "a janela de paginação pode ter atingido o limite do serviço"
+                    "a paginação desta busca não avançou"
                 )
                 manifest["warnings"].append(warning)
-                self._log(f"{warning}; reduza a página inicial ou restrinja a busca")
+                self._log(
+                    f"{warning}; esta execução é parcial. Para coletar desde o início, "
+                    "reinicie com --start-page 1; a API pode exigir buscas menores "
+                    "para avançar além da janela acessível"
+                )
                 break
             seen_page_fingerprints.add(page_ids)
 
@@ -150,6 +156,8 @@ class PilotCollector:
             "record_count": run_report.record_count,
             "downloaded_count": run_report.downloaded_count,
             "skipped_count": run_report.skipped_count,
+            "requested_download_count": self.target_records,
+            "target_reached": run_report.downloaded_count >= self.target_records,
         }
 
         cumulative_records = {
@@ -165,7 +173,8 @@ class PilotCollector:
         self.storage.save_collection(manifest)
         self._log(
             f"coleta encerrada: {run_report.record_count} registros nesta execução, "
-            f"{run_report.downloaded_count} baixados, {run_report.skipped_count} ignorados; "
+            f"{run_report.downloaded_count}/{self.target_records} downloads alvo, "
+            f"{run_report.skipped_count} ignorados; "
             f"{len(cumulative_records)} documentos baixados mantidos no manifesto"
         )
         return manifest, run_report
@@ -173,7 +182,7 @@ class PilotCollector:
     def _collect_record(
         self,
         summary: Mapping[str, Any],
-        page: int,
+        page: int | None,
         raw_record: Mapping[str, Any] | None,
         record_error: BdtdAccessError | None,
         known_sources: dict[str, str],
@@ -183,15 +192,20 @@ class PilotCollector:
         if not record_id:
             self._log("registro sem identificador; ignorando")
             return None
-        self._log(f"processando registro {record_id} da página {page}")
+        source_row = summary.get("_csv_row")
+        location = f"da página {page}" if page is not None else "do CSV"
+        self._log(f"processando registro {record_id} {location}")
         metadata = _metadata(summary)
+        record_url = summary.get("record_url")
         base = {
             "bdtd_id": record_id,
-            "record_url": _record_url(record_id),
+            "record_url": record_url if isinstance(record_url, str) else _record_url(record_id),
             "page": page,
             "metadata": metadata,
             "repository": _repository(summary, metadata),
         }
+        if isinstance(source_row, int):
+            base["provenance"] = {"source_csv_row": source_row}
         if record_error is not None or raw_record is None:
             status = getattr(record_error, "status_code", None)
             transient_failure = (
@@ -230,9 +244,16 @@ class PilotCollector:
                 "reason": reason,
                 "reason_detail": reason_detail,
             }
-        if source_url in known_sources:
-            self._log(f"{record_id}: documento duplicado; ignorando")
-            return None
+        source_key = _canonical_source_url(source_url)
+        duplicate_of = known_sources.get(source_url) or known_sources.get(source_key)
+        if duplicate_of:
+            self._log(f"{record_id}: origem já coletada como {duplicate_of}; ignorando")
+            return {
+                **base,
+                "status": "duplicate",
+                "source_url": source_url,
+                "duplicate_of": duplicate_of,
+            }
 
         try:
             self._log(f"{record_id}: baixando {source_url}")
@@ -259,14 +280,24 @@ class PilotCollector:
                 "reason_detail": "resposta não passou na validação de PDF (MIME/assinatura)",
             }
 
-        if document["sha256"].casefold() in known_checksums:
+        duplicate_of = known_checksums.get(document["sha256"].casefold())
+        if duplicate_of:
             target = self.storage.documents / record_id
             for path in target.glob("*"):
                 path.unlink(missing_ok=True)
             target.rmdir()
-            self._log(f"{record_id}: checksum duplicado; ignorando")
-            return None
+            self._log(f"{record_id}: checksum duplicado de {duplicate_of}; ignorando")
+            known_sources[source_url] = duplicate_of
+            known_sources[source_key] = duplicate_of
+            return {
+                **base,
+                "status": "duplicate",
+                "source_url": source_url,
+                "duplicate_of": duplicate_of,
+                "sha256": document["sha256"],
+            }
         known_sources[source_url] = record_id
+        known_sources[source_key] = record_id
         known_checksums[document["sha256"].casefold()] = record_id
         self._log(f"{record_id}: documento salvo com checksum {document['sha256']}")
         return {**base, "status": "downloaded", "document": document}
@@ -492,3 +523,15 @@ def _is_restricted(metadata: Mapping[str, Any]) -> bool:
 
 def _record_url(record_id: str) -> str:
     return f"https://bdtd.ibict.br/vufind/Record/{quote(record_id, safe='')}"
+
+
+def _canonical_source_url(value: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(value.strip())
+    if parts.scheme.casefold() not in {"http", "https"} or not parts.netloc:
+        return value.strip()
+    host = parts.hostname.casefold() if parts.hostname else ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme.casefold(), host, parts.path or "/", parts.query, ""))

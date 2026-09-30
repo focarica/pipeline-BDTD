@@ -13,6 +13,19 @@ uv run python main.py all --limit 5
 
 ## Piloto inicial (só coleta + staging)
 
+### Importar resultados exportados em CSV
+
+Para ampliar a coleta sem percorrer as páginas repetidas da API, é possível usar uma exportação de resultados da BDTD. O coletor lê o CSV em fluxo e considera somente registros com termos da área de Computação, acesso aberto e link de acesso. `--limit` conta apenas downloads concluídos; `--max-candidates` limita quantos registros elegíveis serão examinados. Registros já baixados ou tentados recentemente são ignorados, e a origem CSV e o número da linha ficam registrados na proveniência.
+
+```bash
+uv run python main.py csv \
+  --input /caminho/para/search_result.csv \
+  --limit 50 \
+  --max-candidates 500
+```
+
+O comando grava os arquivos na camada `data/raw/`, sem executar staging, processamento ou curadoria. Os identificadores CSV são sintéticos e estáveis para evitar baixar o mesmo registro novamente.
+
 ```bash
 uv run python main.py --limit 5
 ```

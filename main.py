@@ -67,6 +67,19 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--workers", type=int, default=8, help="uploads em paralelo (8)")
     sync.add_argument("--dry-run", action="store_true", help="lista o que seria enviado sem enviar")
 
+    csv_collect = subparsers.add_parser(
+        "csv", help="coleta um piloto limitado usando exportação CSV da BDTD"
+    )
+    csv_collect.add_argument("--input", required=True, help="caminho do CSV exportado da BDTD")
+    csv_collect.add_argument("--limit", type=int, default=50, help="downloads novos desejados (50)")
+    csv_collect.add_argument(
+        "--max-candidates",
+        type=int,
+        default=1000,
+        help="máximo de candidatos elegíveis examinados (1000)",
+    )
+    csv_collect.add_argument("--output", default="data/raw", help="diretório local da camada bruta")
+
     run_all = subparsers.add_parser("all", help="roda a esteira completa: coleta, staging, processed e curated")
     run_all.add_argument("--limit", type=int, default=5, help="registros a coletar (5)")
     run_all.add_argument("--max-pages", type=int, default=100, help="máximo de páginas (100)")
@@ -89,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "sync":
         return _run_sync(args)
+
+    if args.command == "csv":
+        return _run_csv(args)
 
     if args.command == "all":
         return _run_all(args)
@@ -139,6 +155,39 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _run_csv(args: argparse.Namespace) -> int:
+    from raw.csv_collector import CsvPilotCollector
+
+    try:
+        collector = CsvPilotCollector(
+            BdtdClient(),
+            LocalStorage(args.output),
+            target_records=args.limit,
+        )
+        manifest, report = collector.collect_csv(
+            args.input,
+            max_candidates=args.max_candidates,
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"a coleta CSV falhou: {exc}", file=sys.stderr)
+        return 1
+
+    summary = manifest.get("run_summary", {})
+    print(
+        f"piloto CSV: {report.downloaded_count}/{args.limit} downloads; "
+        f"{report.skipped_count} ignorados; "
+        f"{summary.get('eligible_candidates_scanned', 0)} candidatos examinados"
+    )
+    print(f"manifesto: {args.output}/manifests/collection.json")
+    for warning in manifest.get("warnings", []):
+        print(f"aviso: {warning}", file=sys.stderr)
+    if not report.valid:
+        for issue in report.issues:
+            print(f"validação: {issue.code}: {issue.message}", file=sys.stderr)
+        return 1
+    return 0 if summary.get("target_reached") else 1
+
+
 def _run_all(args: argparse.Namespace) -> int:
     from processed.runner import ProcessedRunner
 
@@ -153,7 +202,7 @@ def _run_all(args: argparse.Namespace) -> int:
             max_pages=args.max_pages,
             start_page=args.start_page,
         )
-        _, collect_report = collector.collect()
+        collection_manifest, collect_report = collector.collect()
         staging_report = build_staging(args.output, args.staging, prune=args.prune)
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"a coleta falhou: {exc}", file=sys.stderr)
@@ -202,6 +251,16 @@ def _run_all(args: argparse.Namespace) -> int:
     if not curated_report.ok:
         print(
             f"curated com documentos sem chunks: {len(curated_report.missing_chunks)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    run_summary = collection_manifest.get("run_summary", {})
+    if not run_summary.get("target_reached", False):
+        print(
+            "esteira parcial: a coleta não atingiu o alvo de "
+            f"{run_summary.get('requested_download_count', args.limit)} downloads; "
+            "veja os avisos de paginação e tente novamente com --start-page 1",
             file=sys.stderr,
         )
         return 1
