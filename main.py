@@ -67,6 +67,32 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--workers", type=int, default=8, help="uploads em paralelo (8)")
     sync.add_argument("--dry-run", action="store_true", help="lista o que seria enviado sem enviar")
 
+    drive_sync = subparsers.add_parser("drive-sync", help="sincroniza camadas locais com Shared Drive (deduplicacao por sha256)")
+    drive_sync.add_argument(
+        "--layer",
+        action="append",
+        choices=["raw", "staging", "processed", "curated"],
+        help="camada a sincronizar (pode repetir); padrão: raw",
+    )
+    drive_sync.add_argument("--folder-id", default=None, help="ID da pasta no Drive (padrão: GDRIVE_FOLDER_ID)")
+    drive_sync.add_argument("--shared-drive-id", default=None, help="ID do Shared Drive (opcional)")
+    drive_sync.add_argument("--credentials", default=None, help="caminho do JSON da SA (padrão: GOOGLE_APPLICATION_CREDENTIALS)")
+    drive_sync.add_argument("--raw-dir", default="data/raw", help="diretório da camada bruta")
+    drive_sync.add_argument("--staging-dir", default="data/staging", help="diretório da camada staging")
+    drive_sync.add_argument("--processed-dir", default="data/processed", help="diretório da camada processada")
+    drive_sync.add_argument("--curated-dir", default="data/curated", help="diretório da camada curated")
+    drive_sync.add_argument("--workers", type=int, default=4, help="uploads em paralelo (4, limite Drive)")
+    drive_sync.add_argument("--dry-run", action="store_true", help="lista o que seria enviado sem enviar")
+
+    migrate = subparsers.add_parser("migrate-r2-to-drive", help="migra camadas do R2 para o Drive (com dedup)")
+    migrate.add_argument("--folder-id", default=None, help="ID da pasta no Drive (padrão: GDRIVE_FOLDER_ID)")
+    migrate.add_argument("--shared-drive-id", default=None, help="ID do Shared Drive")
+    migrate.add_argument("--bucket", default=None, help="bucket R2 (padrão: R2_BUCKET)")
+    migrate.add_argument("--prefix", default="raw", help="prefixo no R2 a migrar (padrão: raw)")
+    migrate.add_argument("--workers", type=int, default=4, help="downloads/uploads paralelos (4)")
+    migrate.add_argument("--dry-run", action="store_true", help="lista o que seria migrado sem enviar")
+    migrate.add_argument("--tmp-dir", default=None, help="diretório temporário para staging (padrão: temp do sistema)")
+
     csv_collect = subparsers.add_parser(
         "csv", help="coleta um piloto limitado usando exportação CSV da BDTD"
     )
@@ -102,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "sync":
         return _run_sync(args)
+
+    if args.command == "drive-sync":
+        return _run_drive_sync(args)
+
+    if args.command == "migrate-r2-to-drive":
+        return _run_migrate_r2_to_drive(args)
 
     if args.command == "csv":
         return _run_csv(args)
@@ -368,6 +400,99 @@ def _run_sync(args: argparse.Namespace) -> int:
         ok = ok and report.ok
 
     return 0 if ok else 1
+
+
+def _run_drive_sync(args: argparse.Namespace) -> int:
+    import dotenv
+
+    from remote.drive import DriveConfigError, build_drive_client, sync_directory as drive_sync_directory
+
+    dotenv.load_dotenv()
+    folder_id = args.folder_id or os.environ.get("GDRIVE_FOLDER_ID", "").strip() or "1UImdu0YmqoPd8ulwHfDUIMaHBAuIq_N8"
+    shared_drive_id = args.shared_drive_id or os.environ.get("GDRIVE_SHARED_DRIVE_ID", "").strip() or None
+    if args.credentials:
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = args.credentials
+    if not folder_id:
+        print("informe --folder-id ou defina GDRIVE_FOLDER_ID", file=sys.stderr)
+        return 1
+
+    layers = args.layer or ["raw"]
+    layer_dirs = {
+        "raw": args.raw_dir,
+        "staging": args.staging_dir,
+        "processed": args.processed_dir,
+        "curated": args.curated_dir,
+    }
+
+    try:
+        service = build_drive_client()
+    except DriveConfigError as exc:
+        print(f"o drive-sync falhou: {exc}", file=sys.stderr)
+        return 1
+
+    ok = True
+    for layer in layers:
+        local_dir = layer_dirs[layer]
+        try:
+            report = drive_sync_directory(
+                service,
+                local_dir,
+                folder_id,
+                layer,
+                max_workers=args.workers,
+                dry_run=args.dry_run,
+                shared_drive_id=shared_drive_id,
+            )
+        except RuntimeError as exc:
+            print(f"o drive-sync de {layer} falhou: {exc}", file=sys.stderr)
+            ok = False
+            continue
+        print(
+            f"{layer}: {len(report.uploaded)} enviados, {len(report.skipped)} ja atualizados, "
+            f"{len(report.duplicate)} duplicados (sha256), {len(report.failed)} falharam, {len(report.pending)} pendentes"
+        )
+        if report.duplicate:
+            for rel, remote_path in report.duplicate_of:
+                print(f"  duplicado: {rel} ja existe como {remote_path}", file=sys.stderr)
+        ok = ok and report.ok
+
+    return 0 if ok else 1
+
+
+def _run_migrate_r2_to_drive(args: argparse.Namespace) -> int:
+    import dotenv
+
+    from remote.migrate import migrate_r2_to_drive
+
+    dotenv.load_dotenv()
+    folder_id = args.folder_id or os.environ.get("GDRIVE_FOLDER_ID", "").strip() or "1UImdu0YmqoPd8ulwHfDUIMaHBAuIq_N8"
+    shared_drive_id = args.shared_drive_id or os.environ.get("GDRIVE_SHARED_DRIVE_ID", "").strip() or None
+    bucket = args.bucket or os.environ.get("R2_BUCKET", "").strip()
+    if not folder_id:
+        print("informe --folder-id ou GDRIVE_FOLDER_ID", file=sys.stderr)
+        return 1
+    if not bucket:
+        print("informe --bucket ou R2_BUCKET", file=sys.stderr)
+        return 1
+    try:
+        report = migrate_r2_to_drive(
+            bucket=bucket,
+            prefix=args.prefix,
+            folder_id=folder_id,
+            shared_drive_id=shared_drive_id,
+            max_workers=args.workers,
+            dry_run=args.dry_run,
+            tmp_dir=args.tmp_dir,
+        )
+    except RuntimeError as exc:
+        print(f"a migracao falhou: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"migracao {args.prefix}: {len(report.uploaded)} enviados ao Drive, "
+        f"{len(report.skipped)} ja existentes, {len(report.duplicate)} duplicados, "
+        f"{len(report.failed)} falharam"
+    )
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":

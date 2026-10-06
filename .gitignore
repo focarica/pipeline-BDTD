@@ -147,6 +147,18 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Credentials - NEVER commit
+*.json
+!uv.lock
+*.pem
+*.key
+secrets/
+credentials/
+important.txt
+sa-key.json
+drive-bdtd*.json
+mapproject*.json
+
 # Environments
 .env
 .envrc
