@@ -1,0 +1,10 @@
+results/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.pdf
+
+# Exceções restritas à regra *.json da raiz; não liberar credenciais ou resultados.
+!/benchmarks/rag.json
+!/benchmarks/evidence.json

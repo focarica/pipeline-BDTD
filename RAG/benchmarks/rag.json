@@ -1,0 +1,248 @@
+{
+  "benchmark_id": "bdtd-rag-v1",
+  "language": "pt-BR",
+  "status": "gabaritos ancorados em snapshot; requer revisão humana antes da avaliação final",
+  "policy": "Assistente de leitura científica. Responda à pergunta em português. Preserve condições, unidades e limitações. Quando receber evidências, cite chunk_id para afirmações documentais. Não invente números, referências nem resultados. Diferencie relato do autor, inferência e validação independente. Se não houver base suficiente, delimite o que sabe e o que não pode concluir.",
+  "cases": [
+    {
+      "id": "R01", "category": "resultado_condicional", "difficulty": "media",
+      "question": "No DustAI, quais foram os coeficientes de Pearson antes e depois da calibração para MP10 e MP2,5, no cenário com duas semanas de dados? Identifique o cenário para não confundi-lo com todas as coletas do estudo.",
+      "evidence_groups": [["dust.001"]],
+      "required_claims": ["MP10: 0,48 para 0,74", "MP2,5: 0,69 para 0,79", "Resultado do modelo de calibração gerado com duas semanas de dados; não de qualquer coleta indiscriminadamente"],
+      "reference_answer": "No cenário de calibração com duas semanas de dados, o Pearson de MP10 passou de 0,48 a 0,74 e o de MP2,5, de 0,69 a 0,79.",
+      "critical_errors": ["Trocar as duas frações de material particulado", "Apresentar correlação como acurácia de classificação"]
+    },
+    {
+      "id": "R02", "category": "calculo_derivado", "difficulty": "alta",
+      "question": "A partir do resultado de duas semanas do DustAI, calcule a redução percentual do MAE de MP10 e de MP2,5. Mostre a fórmula e não confunda queda absoluta com percentual.",
+      "evidence_groups": [["dust.001"]],
+      "required_claims": ["MAE MP10: 16,56 para 6,88", "MAE MP2,5: 3,39 para 2,25", "Fórmula: (antes - depois) / antes × 100", "Reduções aproximadas de 58,45% e 33,63%, respectivamente; tolerância de 0,1 ponto percentual"],
+      "reference_answer": "Usando (MAE inicial − MAE final)/MAE inicial × 100: MP10 teve redução de 58,45% e MP2,5 de 33,63%. As quedas absolutas foram 9,68 e 1,14, não 9,68% e 1,14%.",
+      "critical_errors": ["Usar o MAE final como denominador", "Dizer que o erro caiu a zero"]
+    },
+    {
+      "id": "R03", "category": "arquitetura_e_condicoes", "difficulty": "media",
+      "question": "Como o DustAI transporta as medições e onde realiza a calibração? Quais fatores ambientais motivam esse processamento? Separe comunicação, processamento e influência ambiental.",
+      "evidence_groups": [["dust.000"]],
+      "required_claims": ["Transmissão em tempo real pela Internet usando LoRaWAN", "Modelo de aprendizado de máquina hospedado na nuvem", "Temperatura e umidade afetam as leituras dos sensores"],
+      "reference_answer": "O transporte usa LoRaWAN para levar as medições à Internet. A calibração usa modelos de AM na nuvem, buscando corrigir leituras influenciadas, entre outros fatores, por temperatura e umidade.",
+      "critical_errors": ["Dizer que LoRaWAN é o algoritmo de calibração", "Afirmar que a calibração é feita exclusivamente no sensor"]
+    },
+    {
+      "id": "R04", "category": "procedimento_experimental", "difficulty": "alta",
+      "question": "Na comparação DustAI–BAM 1020, por que o maior número de leituras válidas do dispositivo não foi usado integralmente na comparação? Quantas amostras horárias pareadas foram obtidas e a quantos dias isso corresponde aproximadamente?",
+      "evidence_groups": [["dust.035"]],
+      "required_claims": ["Pareamento por horas iguais entre os equipamentos", "679 amostras horárias", "Aproximadamente 28 dias", "Ter mais leituras disponíveis não equivale a ter mais pares simultâneos comparáveis"],
+      "reference_answer": "A comparação exigiu horas coincidentes nos dois equipamentos. O pareamento resultou em 679 amostras horárias, cerca de 28 dias; as demais leituras não constituíam pares temporais para essa análise.",
+      "critical_errors": ["Usar 1.289 como número de pares", "Confundir as amostras com 679 dias"]
+    },
+    {
+      "id": "R05", "category": "mecanismo", "difficulty": "media",
+      "question": "O que o PersonaReAct acrescenta ao ReAct, em qual ponto do fluxo e com qual informação do usuário? Ele substitui o ciclo de raciocínio e ação?",
+      "evidence_groups": [["persona.002"]],
+      "required_claims": ["Função/módulo Tailor", "Etapa final de adaptação da resposta", "Adaptação segundo o perfil funcional, características e necessidades do usuário", "Preserva o ciclo original de raciocínio e ação"],
+      "reference_answer": "O Tailor adapta a resposta final ao perfil funcional do usuário. É uma etapa adicional de personalização; o ciclo original de raciocínio e ação do ReAct é preservado.",
+      "critical_errors": ["Descrever Tailor como fine-tuning dos pesos", "Afirmar que elimina a recuperação ou o ciclo ReAct"]
+    },
+    {
+      "id": "R06", "category": "desenho_experimental", "difficulty": "alta",
+      "question": "No Experimento 2 do PersonaReAct, descreva a comparação com Tailor ligado e desligado: quantas perguntas neutras, quantos perfis, quantas saídas por pergunta e quantas saídas no total? Reconcilie a contagem com a descrição de 140 no texto.",
+      "evidence_groups": [["persona.053"]],
+      "required_claims": ["20 perguntas neutras", "6 perfis", "1 resposta neutra com Tailor desligado e 6 personalizadas com Tailor ligado", "7 saídas por pergunta e 140 saídas ao todo (20 × 7); não 140 × 7"],
+      "reference_answer": "São 20 perguntas e seis perfis: cada pergunta gera uma saída neutra e seis personalizadas. Isso produz sete saídas por pergunta e 140 ao todo. A expressão '140 conjuntos' no texto deve ser lida com cautela: a multiplicação explicitada é 20 × 7.",
+      "critical_errors": ["Contabilizar 980 respostas", "Omitir a condição com Tailor desligado"]
+    },
+    {
+      "id": "R07", "category": "controle_de_confundidores", "difficulty": "alta",
+      "question": "Como o Experimento 2 do PersonaReAct tenta separar o efeito do perfil do efeito do conteúdo da pergunta? Quais modelos e temperatura foram usados nesse experimento?",
+      "evidence_groups": [["persona.053"]],
+      "required_claims": ["Perguntas adaptadas em estilo/tom preservando conteúdo e intenção", "Comparação das versões personalizadas com resposta neutra", "o3-mini e GPT-4.1 mini", "temperature = 1"],
+      "reference_answer": "As adaptações mudam estilo e tom, não o conteúdo nem a intenção. As versões personalizadas são comparadas à neutra. O experimento usa o3-mini e GPT-4.1 mini com temperatura 1.",
+      "critical_errors": ["Usar perguntas de assuntos diferentes para cada perfil", "Atribuir temperatura zero ao experimento"]
+    },
+    {
+      "id": "R08", "category": "contradicao_documental", "difficulty": "alta",
+      "question": "Sobre o SAAL, o resumo dos metadados e o texto do resumo no corpus dão a mesma contagem de subcaracterísticas e recomendações? Apresente ambas e explique se é possível declarar uma única contagem definitiva apenas com essas duas evidências.",
+      "evidence_groups": [["saal.abstract"], ["saal.001"]],
+      "required_claims": ["Metadados: duas categorias, dez subcaracterísticas e 55 recomendações", "Texto processado: dez subcaracterísticas principais, sete secundárias e 48 recomendações", "Reconhecer divergência entre representações/fontes", "Não resolver por soma ou preferência arbitrária; consultar versão original ou esclarecimento adicional"],
+      "reference_answer": "Não coincidem: os metadados mencionam 10 subcaracterísticas e 55 recomendações; o resumo processado menciona 10 principais, 7 secundárias e 48 recomendações. Essas evidências não permitem decidir a contagem definitiva nem inferir automaticamente uma mudança de versão.",
+      "critical_errors": ["Ocultar a divergência", "Somar 48 + 7 para justificar 55 como se fossem a mesma entidade"]
+    },
+    {
+      "id": "R09", "category": "metodologia", "difficulty": "media",
+      "question": "No SAAL, que métodos apoiaram a construção do catálogo, qual representação estruturada foi utilizada e quem participou de sua validação? Diferencie construção, representação e validação.",
+      "evidence_groups": [["saal.001"], ["saal.abstract"]],
+      "required_claims": ["Snowballing e Grounded Theory na abordagem de construção", "Softgoal Interdependency Graph (SIG)", "Validação com especialistas/engenheiros de software e desenvolvedores, por entrevistas e questionários segundo os metadados"],
+      "reference_answer": "O trabalho articula Snowballing e Grounded Theory para construir o catálogo, representa o RNF de segurança com SIG e valida a proposta com especialistas, incluindo engenheiros/desenvolvedores, por entrevistas e questionários.",
+      "critical_errors": ["Descrever validação como ensaio clínico com idosos", "Confundir SIG com um classificador treinado"]
+    },
+    {
+      "id": "R10", "category": "dados_e_metodos", "difficulty": "media",
+      "question": "No sistema de recomendação para nutrição oncológica, quais são as duas abordagens computacionais e como são obtidos os perfis dos pacientes usados na proposta? Qual é o papel do profissional de nutrição?",
+      "evidence_groups": [["nutrition.000", "nutrition.041"]],
+      "required_claims": ["TOPSIS e NSGA-II", "Perfis personalizados gerados sinteticamente/hipoteticamente por simulador", "Dados nutricionais de alimentos", "Ferramenta complementar ao trabalho do profissional, não substituição clínica autônoma"],
+      "reference_answer": "O sistema usa TOPSIS e NSGA-II, combinando dados nutricionais dos alimentos com perfis de pacientes gerados sinteticamente. A proposta complementa o trabalho dos profissionais de nutrição.",
+      "critical_errors": ["Afirmar que todos os perfis são prontuários de pacientes reais", "Apresentar o sistema como substituto validado do nutricionista"]
+    },
+    {
+      "id": "R11", "category": "limite_da_conclusao", "difficulty": "alta",
+      "question": "O fato de o sistema de nutrição oncológica gerar dietas que atendem metas e restrições permite concluir que houve melhora clínica de pacientes reais? Explique a diferença entre o resultado computacional descrito e essa conclusão.",
+      "evidence_groups": [["nutrition.000", "nutrition.041"]],
+      "required_claims": ["Resultado relatado é a geração de recomendações que atendem metas e restrições", "Perfis sintéticos/hipotéticos", "Essas evidências não demonstram melhora clínica em pacientes reais", "Validação clínica adicional seria necessária para tal afirmação"],
+      "reference_answer": "Não. O resultado descrito é computacional e utiliza perfis sintéticos. Satisfazer metas e restrições não demonstra, por si, ganho clínico em pacientes reais; não se deve inventar um ensaio clínico.",
+      "critical_errors": ["Inventar redução de mortalidade", "Converter viabilidade computacional em eficácia clínica comprovada"]
+    },
+    {
+      "id": "R12", "category": "resultado_condicional", "difficulty": "media",
+      "question": "Na tese sobre VFC e estágios de COVID-19, qual foi o algoritmo principal e quais foram os dois valores de desempenho apresentados no resumo? Que informação adicional distingue os dois cenários?",
+      "evidence_groups": [["covid.000", "covid.001"]],
+      "required_claims": ["Árvore de decisão", "77% de desempenho médio geral segundo o resumo", "96,7% quando havia informação sobre infecções recentes por COVID-19", "Manter explícita a condição, sem tratar 96,7% como desempenho irrestrito"],
+      "reference_answer": "O resumo seleciona árvore de decisão e relata 77% em geral, chegando a 96,7% quando há informação de infecção recente. A terminologia 'precisão' no resumo em português e 'accuracy' no inglês deve ser preservada com cautela, sem inferir precision técnica.",
+      "critical_errors": ["Dizer que 96,7% é o resultado sem informação adicional", "Afirmar que o resumo demonstra sensibilidade de 96,7%"]
+    },
+    {
+      "id": "R13", "category": "calculo_e_interpretacao", "difficulty": "alta",
+      "question": "No resumo da tese de VFC/COVID-19, a passagem de 77% para 96,7% representa quanto em pontos percentuais e em aumento relativo? Por que o cálculo sozinho não prova que um algoritmo novo superou o anterior?",
+      "evidence_groups": [["covid.000", "covid.001"]],
+      "required_claims": ["19,7 pontos percentuais", "Aumento relativo de aproximadamente 25,58%; tolerância 0,1 ponto percentual", "O cenário de 96,7% dispõe de informação sobre infecção recente", "Não inferir comparação controlada de algoritmos apenas desses números"],
+      "reference_answer": "A diferença é 19,7 pontos percentuais; relativamente a 77%, é 19,7/77 × 100 ≈ 25,58%. Os números envolvem disponibilidade diferente de informação, não demonstram isoladamente uma troca superior de algoritmo.",
+      "critical_errors": ["Confundir 19,7 pontos percentuais com 19,7% relativo", "Omitir a diferença de informação entre cenários"]
+    },
+    {
+      "id": "R14", "category": "fluxo_de_dados", "difficulty": "media",
+      "question": "Na tese de VFC/COVID-19, quais estados de saúde são investigados e como os dados vão da coleta à resposta disponibilizada?",
+      "evidence_groups": [["covid.000", "covid.001"]],
+      "required_claims": ["Indivíduos saudáveis, positivos para COVID-19 e com COVID longa", "Oxímetro automatizado coleta e transmite dados de VFC", "Processamento em servidor remoto", "Sistema web de monitoramento em tempo real"],
+      "reference_answer": "O trabalho investiga saudáveis, COVID-positivos e COVID longa. Um oxímetro automatizado coleta/transmite VFC para um servidor remoto, e um sistema web apresenta o monitoramento em tempo real.",
+      "critical_errors": ["Afirmar que o pipeline depende exclusivamente de exames laboratoriais", "Diagnosticar o usuário da aplicação com base apenas no relato do estudo"]
+    },
+    {
+      "id": "R15", "category": "dados_experimentais", "difficulty": "media",
+      "question": "Na dissertação de estratégias híbridas para preços de ações na B3, qual foi a fonte dos dados, o intervalo temporal e a frequência de amostragem? Que três representações foram usadas para alimentar CNNs?",
+      "evidence_groups": [["stocks.000", "stocks.001"]],
+      "required_claims": ["investing.com", "2013 a 2023", "Amostragem diária", "Blocos, gráfico de linhas e gráfico de velas/candlestick"],
+      "reference_answer": "Os dados vieram do investing.com, de 2013 a 2023, em frequência diária. Para CNNs foram construídas representações em blocos, linhas e velas.",
+      "critical_errors": ["Trocar a frequência diária por intradiária", "Dizer que os dados são cotações futuras de 2026"]
+    },
+    {
+      "id": "R16", "category": "resistencia_a_premissa_falsa", "difficulty": "alta",
+      "question": "O título da dissertação sobre redes híbridas e ações brasileiras prova que as redes híbridas tiveram os menores erros? Responda usando os resultados do resumo e separe erro de correlação.",
+      "evidence_groups": [["stocks.001"]],
+      "required_claims": ["Não: o resumo destaca MLP e Bagging nas métricas de erro", "Redes híbridas em blocos apresentaram correlações altas em geral, sem os melhores erros", "Correlação alta não equivale automaticamente a menor MAE/RMSE"],
+      "reference_answer": "Não. Apesar do título, o resumo destaca MLP e Bagging; a abordagem híbrida em blocos foi promissora pela correlação, mas não obteve os melhores erros. Esses critérios não devem ser confundidos.",
+      "critical_errors": ["Escolher CNN-LSTM como vencedora apenas pelo título", "Apresentar promessa de lucro garantido"]
+    },
+    {
+      "id": "R17", "category": "resumo_versus_tabela", "difficulty": "alta",
+      "question": "O resumo da dissertação de ações menciona RMSE de Bagging abaixo de 0,7. A Tabela 23 permite estender isso a todas as bases e a ambas as análises? Use os valores de MGLU3 multivariada e VALE3 univariada para responder.",
+      "evidence_groups": [["stocks.001"], ["stocks.040"], ["stocks.041"]],
+      "required_claims": ["Bagging multivariada em MGLU3: RMSE 0,7084", "Bagging univariada em VALE3: RMSE 25,1407", "A afirmação abaixo de 0,7 não vale literalmente para todas as bases/cenários", "Reportar a discrepância/limitação do resumo sem modificar os números"],
+      "reference_answer": "Não. A Tabela 23 contém 0,7084 para MGLU3 multivariada e 25,1407 para VALE3 univariada. Portanto, a síntese do resumo não pode ser universalizada; o resultado depende da base e do cenário.",
+      "critical_errors": ["Arredondar 0,7084 para justificar 'abaixo de 0,7'", "Usar Pearson no lugar de RMSE"]
+    },
+    {
+      "id": "R18", "category": "comparacao_intradocumental", "difficulty": "alta",
+      "question": "Na Tabela 23 da dissertação de ações, compare Bagging em VALE3 nas análises univariada e multivariada. Informe RMSE e Pearson de cada uma e interprete a diferença apenas no experimento relatado.",
+      "evidence_groups": [["stocks.040"], ["stocks.041"]],
+      "required_claims": ["VALE3 univariada: RMSE 25,1407 e Pearson 0,2502", "VALE3 multivariada: RMSE 0,2246 e Pearson 0,9998", "Multivariada tem menor RMSE e maior correlação nesse caso", "Sem generalizar para lucro, outros períodos ou todo mercado"],
+      "reference_answer": "Em VALE3, o Bagging univariado tem RMSE 25,1407 e Pearson 0,2502; o multivariado, RMSE 0,2246 e Pearson 0,9998. O segundo foi melhor nesses indicadores do experimento, não uma garantia de ganhos financeiros.",
+      "critical_errors": ["Inverter univariada e multivariada", "Interpretar 0,9998 como retorno financeiro"]
+    },
+    {
+      "id": "R19", "category": "escopo_amostral", "difficulty": "alta",
+      "question": "No estudo de Didelphis aurita e T. cruzi, qual é o período e o tamanho aproximado da base geral descrita no resumo? Essa contagem pode ser atribuída automaticamente a D. aurita em todas as análises?",
+      "evidence_groups": [["ecology.abstract"], ["ecology.030", "ecology.031"]],
+      "required_claims": ["Mais de 3.000 pequenos mamíferos", "Coletas entre 2003 e 2021 na Mata Atlântica", "Não confundir base geral de pequenos mamíferos com subconjunto de D. aurita", "Tabela específica de D. aurita mostra subconjunto por sexo/status, não toda a base"],
+      "reference_answer": "O resumo descreve mais de 3.000 pequenos mamíferos coletados entre 2003 e 2021. Essa base geral não equivale automaticamente ao N de D. aurita em cada análise; os subconjuntos precisam ser identificados.",
+      "critical_errors": ["Declarar que todas as 3.000 observações são D. aurita", "Tratar todos os registros como indivíduos infectados"]
+    },
+    {
+      "id": "R20", "category": "calculo_de_tabela", "difficulty": "alta",
+      "question": "Na Tabela 1 de massa corporal de D. aurita, use as contagens por sexo e status para calcular o total de indivíduos, o total positivo e a fração positiva nesse subconjunto. Não chame essa fração de prevalência de toda a Mata Atlântica.",
+      "evidence_groups": [["ecology.030", "ecology.031"]],
+      "required_claims": ["Negativos: 131 fêmeas e 133 machos; positivos: 123 fêmeas e 75 machos", "Total 462 e total positivo 198", "198/462 ≈ 42,86%; tolerância 0,1 ponto percentual", "Fração apenas do subconjunto da tabela"],
+      "reference_answer": "O total é 131 + 133 + 123 + 75 = 462; os positivos são 198. A fração é 42,86% nesse subconjunto, não uma estimativa automaticamente representativa de todo o bioma.",
+      "critical_errors": ["Usar a base de 3.000 como denominador", "Generalizar a fração para todo o bioma"]
+    },
+    {
+      "id": "R21", "category": "interpretacao_cientifica", "difficulty": "alta",
+      "question": "Que relação entre biodiversidade e infecção o estudo de D. aurita descreve e como ela se conecta à hipótese do efeito de diluição? Por que isso não autoriza afirmar uma lei causal universal?",
+      "evidence_groups": [["ecology.abstract"], ["ecology.007"]],
+      "required_claims": ["Maior diversidade associada a menores taxas de infecção no relato do estudo", "Hipótese de diluição: diversidade pode reduzir transmissão/interação com hospedeiros competentes", "Associação e hipótese não equivalem a causalidade universal comprovada"],
+      "reference_answer": "O estudo relata menores taxas em áreas mais diversas, em consonância com o efeito de diluição. A hipótese relaciona diversidade à redução da transmissão; esses resultados não estabelecem causalidade universal para qualquer ambiente ou parasito.",
+      "critical_errors": ["Dizer que biodiversidade elimina toda transmissão", "Afirmar ensaio causal controlado não descrito"]
+    },
+    {
+      "id": "R22", "category": "metodologia_qualitativa", "difficulty": "media",
+      "question": "Na pesquisa sobre Aprendizagem Tecnológica Ativa no IFAM Manacapuru, quem participou, quais instrumentos foram usados e qual foi a abordagem de pesquisa? Evite descrevê-la como um experimento randomizado.",
+      "evidence_groups": [["ata.002"]],
+      "required_claims": ["20 estudantes em questionários", "7 docentes em entrevistas semiestruturadas", "Abordagem qualitativa, pesquisa documental articulada à de campo", "Contexto do Ensino Médio Integrado em Administração do IFAM Manacapuru"],
+      "reference_answer": "O estudo qualitativo, documental e de campo no EMI em Administração do IFAM Manacapuru usa questionários com 20 estudantes e entrevistas semiestruturadas com sete docentes. Não é descrito como ensaio randomizado.",
+      "critical_errors": ["Trocar as contagens entre docentes e estudantes", "Inventar grupo de controle randomizado"]
+    },
+    {
+      "id": "R23", "category": "achado_e_produto", "difficulty": "media",
+      "question": "A pesquisa de ATA concluiu que os docentes não usavam tecnologias digitais? Qual lacuna identificou e o que o produto educacional oferece para enfrentá-la?",
+      "evidence_groups": [["ata.002"]],
+      "required_claims": ["Docentes já incorporavam metodologias ativas e tecnologias digitais", "Lacuna de sistematização teórica das práticas", "Material com aporte teórico, atividades práticas e exemplos de TDICs/metodologias ativas", "Sugestões de avaliação formativa e diagnóstica"],
+      "reference_answer": "Não: os docentes já as utilizavam, mas faltava sistematização teórica. O produto reúne teoria, atividades, exemplos de aplicação e sugestões de avaliação formativa e diagnóstica.",
+      "critical_errors": ["Atribuir a lacuna à ausência total de uso de tecnologia", "Inventar melhoria numérica em notas escolares"]
+    },
+    {
+      "id": "R24", "category": "comparacao_multidocumental", "difficulty": "alta",
+      "question": "Compare DustAI e o sistema de VFC/COVID-19 como sistemas de sensoriamento com processamento remoto: variável observada, comunicação/interface explicitada e tarefa do modelo. Não suponha que ambos usam LoRaWAN.",
+      "evidence_groups": [["dust.000"], ["covid.000", "covid.001"]],
+      "required_claims": ["DustAI mede material particulado e faz calibração com AM na nuvem", "DustAI explicita LoRaWAN", "VFC/COVID usa VFC coletada por oxímetro, servidor remoto e monitoramento web", "VFC/COVID classifica/investiga estados associados à COVID; LoRaWAN não está demonstrado nessas evidências para esse sistema"],
+      "reference_answer": "DustAI calibra medições de partículas, transmitidas por LoRaWAN, com AM na nuvem. A tese de COVID usa VFC de oxímetro enviada a servidor remoto e monitoramento web para investigar estados de saúde. Não há base nesses trechos para transferir LoRaWAN ao segundo projeto.",
+      "critical_errors": ["Transferir tecnologia ou métrica de um estudo ao outro", "Tratar a calibração de partículas como diagnóstico médico"]
+    },
+    {
+      "id": "R25", "category": "comparacao_multidocumental", "difficulty": "alta",
+      "question": "Compare o papel da personalização em PersonaReAct e no sistema de nutrição oncológica. O que é adaptado, quais informações orientam a adaptação e por que não são a mesma técnica?",
+      "evidence_groups": [["persona.002"], ["nutrition.000", "nutrition.041"]],
+      "required_claims": ["PersonaReAct adapta a resposta final ao perfil funcional via Tailor", "Nutrição gera recomendações alimentares conforme perfis sintéticos, metas e restrições", "TOPSIS/NSGA-II não são o módulo Tailor", "Personalização linguística/comunicativa e recomendação multicritério são mecanismos distintos"],
+      "reference_answer": "PersonaReAct personaliza a apresentação da resposta por perfil usando Tailor. A nutrição personaliza recomendações sob metas e restrições, com TOPSIS/NSGA-II e perfis sintéticos. Compartilham a intenção de adaptar ao usuário, não a mesma técnica.",
+      "critical_errors": ["Dizer que o sistema nutricional foi implementado com PersonaReAct", "Confundir perfis de usuário com treinamento dos pesos"]
+    },
+    {
+      "id": "R26", "category": "comparacao_multidocumental", "difficulty": "alta",
+      "question": "Compare as validações do SAAL e da pesquisa ATA: quem foi consultado, por quais instrumentos e o que cada estudo procura avaliar. Essas validações medem acurácia de classificador?",
+      "evidence_groups": [["saal.abstract"], ["ata.002"]],
+      "required_claims": ["SAAL: especialistas/engenheiros/desenvolvedores; entrevistas e questionários para validar catálogo de segurança", "ATA: questionários a 20 estudantes e entrevistas a sete docentes para investigar prática e contribuições pedagógicas", "Objetos e públicos de avaliação diferentes", "Não apresentar como métricas de acurácia de classificador"],
+      "reference_answer": "SAAL consulta especialistas para validar um catálogo de segurança; ATA consulta estudantes e docentes sobre o processo pedagógico. Ambos usam instrumentos humanos, mas com objetivos distintos, não avaliação de acurácia preditiva.",
+      "critical_errors": ["Atribuir 20 estudantes e sete docentes ao SAAL", "Inventar F1 ou acurácia para esses estudos"]
+    },
+    {
+      "id": "R27", "category": "comparacao_multidocumental", "difficulty": "alta",
+      "question": "DustAI e a dissertação sobre ações usam Pearson e métricas de erro. Compare a finalidade dessas métricas nos dois estudos e explique por que seus valores não devem ser usados para declarar qual projeto é 'melhor' globalmente.",
+      "evidence_groups": [["dust.001"], ["stocks.001", "stocks.040"]],
+      "required_claims": ["DustAI avalia calibração de sensores frente a referência, com Pearson/MAE/MSE", "Ações avalia predição de preços, com Pearson/MAE/RMSE", "Alvos, escalas, unidades, conjuntos e desenhos distintos", "Não ranquear qualidade global pela comparação direta dos números"],
+      "reference_answer": "No DustAI, as métricas avaliam calibração de partículas; nas ações, previsão de preços. MSE não é RMSE, e alvos e escalas diferem. Pearson e erros não permitem um ranking global direto entre projetos.",
+      "critical_errors": ["Comparar MAE de poluição com RMSE de ações como mesma escala", "Concluir que correlação maior valida causalidade"]
+    },
+    {
+      "id": "R28", "category": "informacao_nao_demonstrada", "difficulty": "alta", "answerability": "insufficient_for_requested_claim",
+      "question": "Com base no experimento de VFC/COVID-19, qual é o desempenho garantido para um paciente novo em 2026, independentemente de histórico de infecção, dispositivo e população? Se os resultados não sustentam esse número, explique o limite sem deixar de relatar o que foi medido.",
+      "evidence_groups": [["covid.000", "covid.001"]],
+      "required_claims": ["Não há desempenho universal garantido demonstrado", "77% geral e 96,7% condicionado à informação de infecção recente são resultados relatados", "Não extrapolar automaticamente para novos dispositivos/populações/2026"],
+      "reference_answer": "Não é possível fornecer essa garantia. O resumo relata 77% e 96,7% sob condições distintas; isso não demonstra desempenho independente de população, dispositivo e histórico para um paciente novo.",
+      "critical_errors": ["Garantir 96,7% para qualquer paciente", "Inventar validação prospectiva em 2026"]
+    },
+    {
+      "id": "R29", "category": "informacao_nao_demonstrada", "difficulty": "alta", "answerability": "insufficient_for_requested_claim",
+      "question": "Qual retorno líquido anual garantido, após taxas e custos, obterei em 2026 ao usar o melhor modelo da dissertação de ações brasileiras? Diferencie o que o estudo mede da quantidade solicitada.",
+      "evidence_groups": [["stocks.001"], ["stocks.040"]],
+      "required_claims": ["Não é possível obter retorno líquido anual garantido desses resultados", "Estudo relata erros de predição e correlação, não garantia de lucro", "Métricas históricas não determinam desempenho de investimento em 2026 após custos"],
+      "reference_answer": "Não há retorno garantido derivável. MAE, RMSE e Pearson avaliam predição no experimento; não constituem demonstração de lucro líquido futuro após taxas e custos.",
+      "critical_errors": ["Converter Pearson 0,9998 em retorno de 99,98%", "Inventar backtest com custos ou promessa de lucro"]
+    },
+    {
+      "id": "R30", "category": "contradicao_documental", "difficulty": "alta",
+      "question": "No PersonaReAct, é inequívoco qual modelo julgou as respostas? Compare a apresentação de E1 com a passagem sobre a análise automática: reproduza as duas designações e diga o que falta para afirmar qual avaliador foi realmente executado.",
+      "evidence_groups": [["persona.050"], ["persona.053"]],
+      "required_claims": ["Apresentação de E1 menciona G-Eval com GPT-4o como base", "Passagem de análise automática menciona 4o-mini da OpenAI como julgador", "Reconhecer ambiguidade/divergência textual", "É necessário verificar configuração, código ou registros de execução para resolver, sem escolher por tamanho do modelo"],
+      "reference_answer": "Não é inequívoco nesses trechos: a visão de E1 cita GPT-4o; a descrição da análise cita 4o-mini. A configuração ou os registros do experimento precisam ser verificados antes de afirmar qual foi executado.",
+      "critical_errors": ["Tratar GPT-4o e 4o-mini como nomes idênticos", "Resolver a ambiguidade sem evidência adicional"]
+    }
+  ]
+}
