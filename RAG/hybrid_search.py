@@ -196,30 +196,36 @@ def index(args):
         print(json.dumps(metadata, ensure_ascii=False, indent=2))
 
 
-def query(args):
-    check_server(args.qdrant)
-    response = http(args.qdrant, f"/collections/{args.collection}/points/{MANIFEST_ID}")
+def search_points(qdrant, ollama, collection, text, mode, limit):
+    check_server(qdrant)
+    response = http(qdrant, f"/collections/{collection}/points/{MANIFEST_ID}")
     metadata = response["result"]["payload"]
     if metadata.get("status") != "complete":
         raise ValueError("Coleção incompleta; não está liberada para consulta")
-    lexical = {"query": {"text": args.text}, "using": "search_text", "limit": max(20, args.limit)}
-    if args.mode == "words":
-        body = {**lexical, "limit": args.limit, "with_payload": True}
+    lexical = {"query": {"text": text}, "using": "search_text", "limit": max(20, limit)}
+    if mode == "words":
+        body = {**lexical, "limit": limit, "with_payload": True}
     else:
         identity = metadata["embedding"]
-        current = embedding_identity(args.ollama, identity["name"])
-        if current["digest"] != identity["digest"]:
+        current = embedding_identity(ollama, identity["name"])
+        if current["name"] != identity["name"] or current["digest"] != identity["digest"]:
             raise ValueError("Embedding instalado difere do usado no índice; restaure o modelo ou reindexe em outra coleção")
-        vector = embed(args.ollama, identity["name"], [args.text])[0]
+        vector = embed(ollama, identity["name"], [text])[0]
         if len(vector) != identity["dimensions"]:
             raise ValueError("Dimensão do embedding incompatível com o índice")
-        dense = {"query": vector, "using": "dense", "limit": max(20, args.limit)}
+        dense = {"query": vector, "using": "dense", "limit": max(20, limit)}
         body = ({"prefetch": [lexical, dense], "query": {"fusion": "rrf"}}
-                if args.mode == "hybrid" else dense)
-        body.update(limit=args.limit, with_payload=True)
-    result = http(args.qdrant, f"/collections/{args.collection}/points/query", body)
+                if mode == "hybrid" else dense)
+        body.update(limit=limit, with_payload=True)
+    result = http(qdrant, f"/collections/{collection}/points/query", body)
+    return metadata, result["result"]["points"]
+
+
+def query(args):
+    metadata, points = search_points(args.qdrant, args.ollama, args.collection,
+                                     args.text, args.mode, args.limit)
     print(json.dumps({"mode": args.mode, "source": metadata["source"],
-                      "points": result["result"]["points"]}, ensure_ascii=False, indent=2))
+                      "points": points}, ensure_ascii=False, indent=2))
 
 
 def main(argv=None):

@@ -93,7 +93,7 @@ class HybridTests(unittest.TestCase):
         self.assertEqual(states, ["building", "complete"])
 
     def test_incomplete_collection_not_queried(self):
-        args = argparse.Namespace(qdrant="q", collection="partial")
+        args = argparse.Namespace(qdrant="q", ollama="o", collection="partial", text="question", mode="words", limit=5)
         with patch.object(hybrid, "check_server"), patch.object(hybrid, "http", return_value={"result": {"payload": {"status": "building"}}}):
             with self.assertRaisesRegex(ValueError, "incompleta"):
                 hybrid.query(args)
@@ -115,6 +115,34 @@ class HybridTests(unittest.TestCase):
             hybrid.query(args)
             embed.assert_not_called()
             self.assertEqual(self.body["using"], "search_text")
+
+    def test_search_points_all_modes_use_qdrant_collection(self):
+        metadata = {"status": "complete", "source": {"sha256": "corpus"},
+                    "embedding": {"name": "bge-m3:latest", "digest": "d", "dimensions": 2}}
+        calls = []
+        def fake_http(url, path, payload=None, method=None):
+            calls.append((url, path, payload, method))
+            if path.endswith(hybrid.MANIFEST_ID):
+                return {"result": {"payload": metadata}}
+            return {"result": {"points": [{"id": "point-1", "payload": {"chunk_id": "c1"}}]}}
+        with patch.object(hybrid, "check_server"), patch.object(hybrid, "http", side_effect=fake_http), patch.object(hybrid, "embedding_identity", return_value={"name": "bge-m3:latest", "digest": "d"}), patch.object(hybrid, "embed", return_value=[[1, 0]]) as embed:
+            for mode in ("words", "semantic", "hybrid"):
+                got_metadata, points = hybrid.search_points("q", "o", "c", "minha pergunta", mode, 5)
+                self.assertIs(got_metadata, metadata)
+                self.assertEqual(points[0]["payload"]["chunk_id"], "c1")
+            query_bodies = [call[2] for call in calls if call[1].endswith("/points/query")]
+            self.assertEqual(len(query_bodies), 3)
+            self.assertEqual(query_bodies[0]["using"], "search_text")
+            self.assertEqual(query_bodies[1]["using"], "dense")
+            self.assertEqual(query_bodies[2]["query"], {"fusion": "rrf"})
+            self.assertEqual(len(embed.call_args_list), 2)
+
+    def test_semantic_search_fails_if_embedding_digest_changed(self):
+        manifest = {"status": "complete", "source": {},
+                    "embedding": {"name": "bge", "digest": "old", "dimensions": 2}}
+        with patch.object(hybrid, "check_server"), patch.object(hybrid, "http", return_value={"result": {"payload": manifest}}), patch.object(hybrid, "embedding_identity", return_value={"name": "bge", "digest": "new"}):
+            with self.assertRaisesRegex(ValueError, "difere"):
+                hybrid.search_points("q", "o", "c", "pergunta", "semantic", 5)
 
 
 if __name__ == "__main__":

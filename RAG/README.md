@@ -74,12 +74,68 @@ O Compose fixa o projeto `trab_final` para reutilizar o contêiner e o volume
 `trab_final_qdrant_data` já criados. Esta cópia não reinicia o serviço nem interfere na carga.
 Em outra máquina, o mesmo comando cria os recursos se ainda não existirem.
 
-## Executar baseline cru
+## Rodar o benchmark nos quatro braços
+
+O baseline cru continua isolado; os outros três braços usam a mesma coleção pronta do Qdrant.
+O runner executa cada pergunta em sessões independentes e não envia gabarito/answer key ao Qwen.
+
+Todos os modos, na mesma execução:
+
+```bash
+uv run run_rag.py \
+  --benchmark benchmarks/rag.json \
+  --model qwen3.5:2b \
+  --mode all \
+  --collection bdtd_20261109 \
+  --think off
+```
+
+Isso faz **120 gerações** para 30 perguntas: baseline sem contexto, BM25 por palavras,
+embedding semântico, e RRF híbrido. Para teste curto:
+
+```bash
+uv run run_rag.py --benchmark benchmarks/rag.json --mode all \
+  --collection bdtd_20261109 --case R01 --think off
+```
+
+Um método por execução:
+
+```bash
+uv run run_rag.py --benchmark benchmarks/rag.json --mode words --collection bdtd_20261109
+uv run run_rag.py --benchmark benchmarks/rag.json --mode semantic --collection bdtd_20261109
+uv run run_rag.py --benchmark benchmarks/rag.json --mode hybrid --collection bdtd_20261109
+```
+
+Acrescente `--think off` aos comandos acima para manter a mesma configuração do ensaio `all`.
+
+Valores válidos de `--mode`: `baseline`, `words`, `semantic`, `hybrid`, `all`.
+`baseline` não precisa de `--collection` e envia somente a pergunta. Para os demais, o
+runner recupera top-k do Qdrant, envia os trechos com uma instrução de fundamentação/citação,
+e registra IDs e scores dos trechos usados. BM25, vetorial e RRF são os mesmos caminhos de
+consulta testados por `hybrid_search.py query`.
+
+No teste integrado, `qwen3.5:2b` usou o orçamento padrão inteiro em raciocínio nos prompts RAG
+e terminou sem conteúdo (`done_reason=length`). Para estas respostas curtas, passe `--think off`;
+essa configuração é enviada igualmente ao baseline e aos três braços RAG. Se omitir a opção,
+Ollama usa seu modo padrão em todos eles. Se não houver resposta final, o erro informa motivo
+e recomendações em vez de registrar silenciosamente uma resposta vazia.
+
+O relatório compara esperado × respondido para cada método, resume latências de recuperação
+e geração e enumera trechos. **Não calcula acurácia semântica automática**: as notas exigem
+revisão humana. Não concluir que um método é melhor somente por produzir textos parecidos
+com o gabarito; conferir os `required_claims`, erros críticos e evidências citadas em
+`benchmarks/rag.json` / `benchmarks/evidence.json`.
+
+O `manifest.json` registra hash/configuração do benchmark, modelo, coleção e snapshot R2
+efetivamente usado. Não misture execuções de coleções/snapshots diferentes. Um erro de busca
+é gravado para aquele caso/método; o runner continua os outros casos.
+
+## Executar somente o baseline cru
 
 Com o Ollama ativo, dentro de `RAG`:
 
 ```bash
-uv run run_rag.py --benchmark benchmarks/rag.json --model qwen3.5:2b
+uv run run_rag.py --benchmark benchmarks/rag.json --model qwen3.5:2b --mode baseline
 ```
 
 O runner envia **somente a pergunta original como uma mensagem de usuário**, em chamada
@@ -108,14 +164,15 @@ O terminal mostra pergunta, esperado, respondido e tempo. Em `results/<horário>
 
 - `report.md`: comparação esperado × respondido para cada questão.
 - `answers.jsonl`: resposta e requisição exata enviada ao Ollama; raciocínio separado se retornado.
-- `summary.json`: execuções, falhas, truncamentos e tempo; sem percentual fictício de acerto.
-- `manifest.json`: configuração, hashes e metadados do modelo; marca `mode: raw_baseline`.
+- `summary.json`: contagens, falhas, truncamentos e tempos por braço; sem percentual fictício de acerto.
+- `manifest.json`: configuração, hashes e metadados do modelo, coleção e snapshot.
 
 Resultados antigos com prompt de sistema ou busca foram preservados, mas **não são o baseline
 cru**. Execute novamente e não misture esses resultados com os novos.
 
 Outras opções: `--output results/nome-novo`, `--url http://127.0.0.1:11434`,
-`--timeout 600`, `--max-tokens 1200`, `--num-ctx 16384`, `--seed 42`.
+`--qdrant http://127.0.0.1:6333`, `--top-k 5`, `--context-chars 18000`,
+`--think on|off`, `--timeout 600`, `--max-tokens 1200`, `--num-ctx 16384`, `--seed 42`.
 O diretório de saída deve ser novo. `Ctrl+C` preserva os casos concluídos; não há retomada
 automática. O runner não instala modelos nem acessa o R2. Usa somente a biblioteca padrão.
 
@@ -125,5 +182,6 @@ automática. O runner não instala modelos nem acessa o R2. Usa somente a biblio
 uv run python -m unittest discover -s tests -v
 ```
 
-Verificam que apenas a pergunta chega ao gerador, sem política, contexto, gabarito,
-histórico ou alteração explícita do modo de raciocínio.
+Verificam isolamento do baseline, ausência de gabarito nos prompts, integração simulada dos
+três retrievers, seleção dos trechos, registro do snapshot e tratamento de falhas. Não chamam
+Ollama, R2 ou Qdrant nos testes unitários.
