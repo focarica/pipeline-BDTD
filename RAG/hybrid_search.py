@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["boto3>=1.35,<2"]
 # ///
-"""Base híbrida Qdrant: curated do R2, embeddings Ollama e BM25 nativo."""
+"""Busca semântica no Qdrant sobre o curated do R2."""
 
 import argparse
 from datetime import datetime, timezone
@@ -19,6 +19,7 @@ import urllib.request
 import uuid
 
 MANIFEST_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "bdtd-hybrid-index-manifest-v1"))
+EMBEDDING_MODEL = "qwen3-embedding:4b"
 
 
 def http(base, path, payload=None, method=None):
@@ -34,13 +35,6 @@ def http(base, path, payload=None, method=None):
         raise RuntimeError(f"HTTP {exc.code} em {base}{path}: {detail}") from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Falha em {base}{path}: {exc}") from exc
-
-
-def check_server(url):
-    info = http(url, "/")
-    version = tuple(int(n) for n in info["version"].split(".")[:2])
-    if version < (1, 20):
-        raise ValueError("BM25 nativo exige Qdrant >= 1.20; use o compose.yaml deste projeto")
 
 
 def embedding_identity(url, name):
@@ -139,7 +133,7 @@ def entries(path):
 def point(entry, vector):
     return {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, "bdtd:" + entry["kind"] + ":" + entry["chunk_id"])),
             "vector": {"dense": vector},
-            "payload": {**entry, "search_text": (entry.get("title") or "") + "\n" + entry["text"]}}
+            "payload": entry}
 
 
 def save_manifest(args, metadata):
@@ -148,10 +142,9 @@ def save_manifest(args, metadata):
 
 
 def index(args):
-    check_server(args.qdrant)
     if any(c["name"] == args.collection for c in http(args.qdrant, "/collections")["result"]["collections"]):
         raise ValueError("Coleção já existe; escolha um nome novo. Nada foi apagado ou sobrescrito.")
-    identity = embedding_identity(args.ollama, args.embedding_model)
+    identity = embedding_identity(args.ollama, EMBEDDING_MODEL)
     # Snapshot temporário evita manter uma conexão R2 aberta durante horas de embeddings.
     with tempfile.TemporaryDirectory(prefix="bdtd-index-", dir="/tmp/opencode") as tmp:
         path = Path(tmp) / "curated.jsonl"
@@ -166,10 +159,6 @@ def index(args):
         metadata = {"kind": "index_manifest", "status": "building", "source": source,
                     "counts": counts, "embedding": {**identity, "dimensions": dimensions}}
         save_manifest(args, metadata)
-        http(args.qdrant, f"/collections/{args.collection}/index?wait=true", {
-            "field_name": "search_text", "field_schema": {
-                "type": "text", "tokenizer": "word", "lowercase": True,
-                "ascii_folding": True, "stopwords": "portuguese", "scoring": True}}, "PUT")
         batch, uploaded = [], 0
 
         def flush():
@@ -196,35 +185,30 @@ def index(args):
         print(json.dumps(metadata, ensure_ascii=False, indent=2))
 
 
-def search_points(qdrant, ollama, collection, text, mode, limit):
-    check_server(qdrant)
+def search_points(qdrant, ollama, collection, text, limit):
     response = http(qdrant, f"/collections/{collection}/points/{MANIFEST_ID}")
     metadata = response["result"]["payload"]
     if metadata.get("status") != "complete":
         raise ValueError("Coleção incompleta; não está liberada para consulta")
-    lexical = {"query": {"text": text}, "using": "search_text", "limit": max(20, limit)}
-    if mode == "words":
-        body = {**lexical, "limit": limit, "with_payload": True}
-    else:
-        identity = metadata["embedding"]
-        current = embedding_identity(ollama, identity["name"])
-        if current["name"] != identity["name"] or current["digest"] != identity["digest"]:
-            raise ValueError("Embedding instalado difere do usado no índice; restaure o modelo ou reindexe em outra coleção")
-        vector = embed(ollama, identity["name"], [text])[0]
-        if len(vector) != identity["dimensions"]:
-            raise ValueError("Dimensão do embedding incompatível com o índice")
-        dense = {"query": vector, "using": "dense", "limit": max(20, limit)}
-        body = ({"prefetch": [lexical, dense], "query": {"fusion": "rrf"}}
-                if mode == "hybrid" else dense)
-        body.update(limit=limit, with_payload=True)
+    identity = metadata["embedding"]
+    if identity["name"] != EMBEDDING_MODEL:
+        raise ValueError(f"Coleção usa {identity['name']!r}; reindexe em outra coleção com {EMBEDDING_MODEL}")
+    current = embedding_identity(ollama, EMBEDDING_MODEL)
+    if current["digest"] != identity["digest"]:
+        raise ValueError("Embedding instalado difere do usado no índice; restaure o modelo ou reindexe em outra coleção")
+    query_text = f"Instruct: Dada uma pergunta, recupere trechos de teses e dissertações que a respondam.\nQuery: {text}"
+    vector = embed(ollama, EMBEDDING_MODEL, [query_text])[0]
+    if len(vector) != identity["dimensions"]:
+        raise ValueError("Dimensão do embedding incompatível com o índice")
+    body = {"query": vector, "using": "dense", "limit": limit, "with_payload": True}
     result = http(qdrant, f"/collections/{collection}/points/query", body)
     return metadata, result["result"]["points"]
 
 
 def query(args):
     metadata, points = search_points(args.qdrant, args.ollama, args.collection,
-                                     args.text, args.mode, args.limit)
-    print(json.dumps({"mode": args.mode, "source": metadata["source"],
+                                     args.text, args.limit)
+    print(json.dumps({"mode": "semantic", "source": metadata["source"],
                       "points": points}, ensure_ascii=False, indent=2))
 
 
@@ -236,11 +220,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     load = sub.add_parser("index", help="indexa curated diretamente do R2, sem escrever no bucket")
     load.add_argument("--object-key", default="curated/datasets/chunks.jsonl")
-    load.add_argument("--embedding-model", default="bge-m3")
     load.add_argument("--batch-size", type=int, default=8)
     search = sub.add_parser("query", help="recupera trechos; não chama modelo gerador")
     search.add_argument("--text", required=True)
-    search.add_argument("--mode", choices=("hybrid", "words", "semantic"), default="hybrid")
     search.add_argument("--limit", type=int, default=5)
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.collection):

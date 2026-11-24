@@ -3,9 +3,9 @@
 Código, testes e benchmark de RAG. Não inclui PDFs de apoio, guardrails, credenciais,
 corpus completo ou resultados de execuções. Execute os comandos desta página dentro de `RAG/`.
 
-## Base de busca híbrida — R2 → Qdrant
+## Busca semântica — R2 → Qdrant
 
-Esta base é separada do baseline cru. `run_rag.py` continua enviando somente a pergunta.
+Esta base é separada do baseline cru.
 `hybrid_search.py` apenas indexa e recupera trechos: não chama o Qwen gerador e não executa
 o benchmark. Nenhum gabarito ou arquivo de `benchmarks/` é indexado.
 
@@ -13,7 +13,7 @@ o benchmark. Nenhum gabarito ou arquivo de `benchmarks/` é indexado.
 
 ```bash
 docker compose up -d qdrant
-ollama pull bge-m3
+ollama pull qwen3-embedding:4b
 ```
 
 2. Indexar **o objeto remoto** `curated/datasets/chunks.jsonl` usando as credenciais R2
@@ -21,7 +21,7 @@ da pipeline, sem copiar `.env` ou credenciais para este projeto:
 
 ```bash
 uv run --env-file ../.env \
-  hybrid_search.py --collection bdtd_20261109 index
+  hybrid_search.py --collection bdtd_qwen3_4b index
 ```
 
 O script usa boto3 declarado no próprio arquivo. O `.env` pertence à raiz da pipeline e não
@@ -41,30 +41,17 @@ substitui coleções. Carga interrompida permanece marcada como incompleta e nã
 pelo script; crie uma coleção nova para repetir. Esta versão inicial não implementa retomada,
 troca automática de alias ou exclusão de índices antigos.
 
-3. Consultar a combinação semântica + palavras:
+3. Consultar a nova coleção:
 
 ```bash
-uv run hybrid_search.py --collection bdtd_20261109 query \
+uv run hybrid_search.py --collection bdtd_qwen3_4b query \
   --text "Quais os resultados da calibração de MP10 no DustAI?"
 ```
 
-Ou testar os componentes separadamente:
-
-```bash
-uv run hybrid_search.py --collection bdtd_20261109 query --mode words --text "DustAI MP10"
-uv run hybrid_search.py --collection bdtd_20261109 query --mode semantic --text "calibração de sensores de partículas"
-```
-
-- **Semântica:** embedding `bge-m3` pelo Ollama e similaridade cosseno no Qdrant.
-- **Palavras:** BM25 nativo sobre título + texto, com minúsculas, normalização de acentos e
-  stopwords portuguesas. Corpus contém também inglês; não aplicamos stemming português a
-  textos bilíngues. Parâmetros e qualidade ainda precisam ser avaliados em dados de desenvolvimento.
-- **Híbrida:** até 20 candidatos por componente, combinados por RRF com pesos padrão iguais.
-  Retorna cinco trechos por padrão (`--limit`). O score não é probabilidade de resposta correta.
-- **Dependência de versão:** Qdrant **>=1.20**, necessário para BM25 no índice textual.
-  O Compose fixa 1.20.0. Não é somente filtro de palavras nem banco SQLite auxiliar.
-- Consultas exigem carga concluída. Semântica/híbrida verificam se o digest do embedding
-  instalado continua igual ao usado na carga. `words` funciona sem Ollama.
+O Ollama gera embeddings com `qwen3-embedding:4b` para título + texto e para a pergunta
+(com instrução de recuperação). O Qdrant retorna os cinco trechos mais próximos por cosseno
+por padrão (`--limit`). A coleção antiga com `bge-m3` fica intacta, mas não é compatível com
+este runner. A consulta exige carga concluída e verifica o modelo, digest e dimensão.
 
 URLs alternativas: `--qdrant` e `--ollama` antes do subcomando. Serviço local não tem
 autenticação: não exponha sua porta em rede pública. `docker compose stop` para parar sem
@@ -74,9 +61,9 @@ O Compose fixa o projeto `trab_final` para reutilizar o contêiner e o volume
 `trab_final_qdrant_data` já criados. Esta cópia não reinicia o serviço nem interfere na carga.
 Em outra máquina, o mesmo comando cria os recursos se ainda não existirem.
 
-## Rodar o benchmark nos quatro braços
+## Rodar o benchmark com e sem RAG
 
-O baseline cru continua isolado; os outros três braços usam a mesma coleção pronta do Qdrant.
+O baseline cru continua isolado; só o braço semântico consulta a coleção do Qdrant.
 O runner executa cada pergunta em sessões independentes e não envia gabarito/answer key ao Qwen.
 
 Todos os modos, na mesma execução:
@@ -86,42 +73,46 @@ uv run run_rag.py \
   --benchmark benchmarks/rag.json \
   --model qwen3.5:2b \
   --mode all \
-  --collection bdtd_20261109 \
+  --collection bdtd_qwen3_4b \
   --think off
 ```
 
-Isso faz **120 gerações** para 30 perguntas: baseline sem contexto, BM25 por palavras,
-embedding semântico, e RRF híbrido. Para teste curto:
+O benchmark mistura **20 perguntas abertas e 10 de múltipla escolha**, sem alterar o total
+de 30 casos. `--mode all` faz **60 gerações**: baseline sem contexto e RAG semântico.
+Para teste curto:
 
 ```bash
 uv run run_rag.py --benchmark benchmarks/rag.json --mode all \
-  --collection bdtd_20261109 --case R01 --think off
+  --collection bdtd_qwen3_4b --case R01 --think off
 ```
 
-Um método por execução:
+Só o braço semântico:
 
 ```bash
-uv run run_rag.py --benchmark benchmarks/rag.json --mode words --collection bdtd_20261109
-uv run run_rag.py --benchmark benchmarks/rag.json --mode semantic --collection bdtd_20261109
-uv run run_rag.py --benchmark benchmarks/rag.json --mode hybrid --collection bdtd_20261109
+uv run run_rag.py --benchmark benchmarks/rag.json --mode semantic --collection bdtd_qwen3_4b --think off
 ```
 
-Acrescente `--think off` aos comandos acima para manter a mesma configuração do ensaio `all`.
+Valores válidos de `--mode`: `baseline`, `semantic`, `all`.
+Por padrão `--format benchmark` respeita o tipo de cada caso. O gabarito de múltipla escolha
+é pontuado automaticamente quando o modelo inicia a resposta com A/B/C/D. Respostas ambíguas
+ficam não pontuadas; não são contadas como corretas. As abertas continuam para comparação
+esperado × respondido e avaliação humana. Use `--format open` para rodar só respostas abertas,
+`--format multiple-choice` para os dez itens fechados, ou `--format both` para executar também
+os dez itens MC em formato aberto (80 gerações no modo `all`). Isso permite comparar o formato
+mantendo o conteúdo das perguntas.
 
-Valores válidos de `--mode`: `baseline`, `words`, `semantic`, `hybrid`, `all`.
-`baseline` não precisa de `--collection` e envia somente a pergunta. Para os demais, o
+`baseline` não precisa de `--collection` e envia somente a pergunta (com alternativas quando houver). No braço semântico, o
 runner recupera top-k do Qdrant, envia os trechos com uma instrução de fundamentação/citação,
-e registra IDs e scores dos trechos usados. BM25, vetorial e RRF são os mesmos caminhos de
-consulta testados por `hybrid_search.py query`.
+e registra os IDs e scores da recuperação. A busca recebe o enunciado, sem alternativas.
 
 No teste integrado, `qwen3.5:2b` usou o orçamento padrão inteiro em raciocínio nos prompts RAG
 e terminou sem conteúdo (`done_reason=length`). Para estas respostas curtas, passe `--think off`;
-essa configuração é enviada igualmente ao baseline e aos três braços RAG. Se omitir a opção,
+essa configuração é enviada igualmente ao baseline e ao braço RAG. Se omitir a opção,
 Ollama usa seu modo padrão em todos eles. Se não houver resposta final, o erro informa motivo
 e recomendações em vez de registrar silenciosamente uma resposta vazia.
 
-O relatório compara esperado × respondido para cada método, resume latências de recuperação
-e geração e enumera trechos. **Não calcula acurácia semântica automática**: as notas exigem
+O relatório compara esperado × respondido para cada método, resume latências medianas e p90
+de geração e ponta a ponta (busca + geração no RAG) e enumera trechos. **Não calcula acurácia semântica automática**: as notas exigem
 revisão humana. Não concluir que um método é melhor somente por produzir textos parecidos
 com o gabarito; conferir os `required_claims`, erros críticos e evidências citadas em
 `benchmarks/rag.json` / `benchmarks/evidence.json`.

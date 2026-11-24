@@ -1,11 +1,23 @@
 # Benchmark RAG — 30 perguntas
 
-- `rag.json`: perguntas, resposta de referência, itens obrigatórios e erros críticos.
-- `RAG.md`: versão legível do mesmo benchmark.
+- `rag.json`: 30 casos — 20 perguntas abertas e 10 de múltipla escolha —, gabaritos, itens
+  obrigatórios e erros críticos.
+- `RAG.md`: versão legível do mesmo benchmark, incluindo alternativas e chave de resposta.
 - `evidence.json`: fixture de referência, com 20 chunks de oito documentos, metadados e
   proveniência do snapshot lido diretamente do R2. Não é resultado de modelo nem corpus completo.
 - `export_evidence.py`: exportador somente leitura das evidências selecionadas do R2.
 - `validate.py`: checa os 30 casos e suas referências, sem chamar modelos.
+
+O runner usa por padrão `--format benchmark`: respeita os dez itens MC no conjunto misto e
+calcula acerto exato da letra quando a saída começa com A/B/C/D. Resposta sem letra extraível
+fica não pontuada. `--format open`, `--format multiple-choice` e `--format both` permitem
+ablação de formato; em `both`, os dez casos MC também rodam abertos.
+
+A pontuação MC é objetiva: alternativa extraída igual à chave = correta; outra letra = incorreta;
+sem letra inicial reconhecível = não pontuada (denominador reportado separadamente). O prompt
+instrui o modelo a responder só com a letra. O gabarito `correct_option` e as opções certas não
+entram no prompt; o relatório mostra a chave depois da geração. Questões abertas não recebem
+nota automática; continuam exigindo avaliação humana das alegações e evidências.
 
 Não incluir esta pasta no índice ou no prompt do gerador. O baseline recebe **somente**
 `question`; o gabarito é usado no relatório esperado × respondido. A base híbrida importa

@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Benchmarka Qwen no Ollama: baseline cru e RAG por palavras, semântica ou híbrido."""
+"""Benchmarka Qwen no Ollama: baseline cru e RAG semântico."""
 
 from datetime import datetime, timezone
 import argparse
@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import statistics
 import sys
 import time
@@ -52,8 +53,24 @@ def request_json(base, route, payload=None, timeout=600):
         raise RuntimeError(f"Falha ao consultar Ollama em {base}: {exc}") from exc
 
 
-def generation_payload(args, question, mode, hits=()):
-    messages = [{"role": "user", "content": question}]
+def formatted_question(case, question_format):
+    question = case if isinstance(case, str) else case["question"]
+    if question_format == "multiple_choice":
+        if isinstance(case, str) or not isinstance(case.get("choices"), dict):
+            raise ValueError("Questão sem alternativas para formato múltipla escolha")
+        choices = "\n".join(f"{letter}) {text}" for letter, text in case["choices"].items())
+        question += f"\n\nAlternativas:\n{choices}\n\nResponda somente com a letra da alternativa correta (A, B, C ou D)."
+    return question
+
+
+def parse_choice(answer):
+    match = re.match(r"^\s*(?:resposta\s*:\s*)?[\(\[]?([A-D])(?:[\)\].:\s]|$)", answer, re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
+def generation_payload(args, question, mode, hits=(), question_format="open"):
+    prompt_question = question if isinstance(question, str) else formatted_question(question, question_format)
+    messages = [{"role": "user", "content": prompt_question}]
     if mode != "raw_baseline":
         context = []
         remaining = args.context_chars
@@ -68,7 +85,7 @@ def generation_payload(args, question, mode, hits=()):
             context.append(header + snippet)
             remaining -= len(header) + len(snippet) + 1
         user_content = "TRECHOS RECUPERADOS:\n" + ("\n\n".join(context) or "Nenhum trecho recuperado.")
-        user_content += f"\n\nPERGUNTA:\n{question}"
+        user_content += f"\n\nPERGUNTA:\n{prompt_question}"
         messages = [{"role": "system", "content": RAG_SYSTEM}, {"role": "user", "content": user_content}]
 
     payload = {"model": args.model, "stream": False, "messages": messages}
@@ -101,24 +118,40 @@ def chat(args, payload):
     }
 
 
-def _mode_summary(mode, records, selected):
-    rows = [r for r in records if r["mode"] == mode]
+def p90(values):
+    return sorted(values)[max(0, (9 * len(values) + 9) // 10 - 1)] if values else None
+
+
+def _mode_summary(mode, question_format, records, selected):
+    rows = [r for r in records if r["mode"] == mode and r["question_format"] == question_format]
     answered = [r for r in rows if "answer" in r]
     retrievals = [r["retrieval_seconds"] for r in rows if "retrieval_seconds" in r]
+    scores = [r for r in answered if r["question_format"] == "multiple_choice" and r.get("choice") is not None]
     return {
         "selected": selected, "attempted": len(rows), "answered": len(answered),
         "failed": sum("error" in r for r in rows),
         "truncated": sum(r.get("timing", {}).get("done_reason") == "length" for r in answered),
         "median_retrieval_seconds": statistics.median(retrievals) if retrievals else None,
         "median_generation_seconds": statistics.median(r["timing"]["wall_seconds"] for r in answered) if answered else None,
-        "quality_score": None,
+        "p90_generation_seconds": p90([r["timing"]["wall_seconds"] for r in answered]),
+        "median_end_to_end_seconds": statistics.median(r["end_to_end_seconds"] for r in answered) if answered else None,
+        "p90_end_to_end_seconds": p90([r["end_to_end_seconds"] for r in answered]),
+        "multiple_choice_scored": len(scores),
+        "multiple_choice_correct": sum(r["is_correct"] is True for r in scores),
+        "multiple_choice_unparsed": sum(r.get("choice") is None for r in answered if r["question_format"] == "multiple_choice"),
+        "multiple_choice_accuracy": sum(r["is_correct"] is True for r in scores) / len(scores) if scores else None,
     }
 
 
 def render_report(directory, manifest, records, interrupted=False):
-    summaries = {mode: _mode_summary(mode, records, len(manifest["case_ids"]))
-                 for mode in manifest["modes"]}
-    summaries["not_completed"] = max(0, len(manifest["case_ids"]) * len(manifest["modes"]) - len(records))
+    summaries = {}
+    for mode in manifest["modes"]:
+        for question_format, count in manifest["format_counts"].items():
+            if not count:
+                continue
+            summaries[f"{mode}/{question_format}"] = _mode_summary(
+                mode, question_format, records, count)
+    summaries["not_completed"] = max(0, sum(manifest["format_counts"].values()) * len(manifest["modes"]) - len(records))
     summaries["interrupted"] = interrupted
     lines = ["# Benchmark RAG — comparação dos métodos", "",
              f"Modelo: `{manifest['model']}` | benchmark: `{manifest['benchmark_id']}`", "",
@@ -126,9 +159,19 @@ def render_report(directory, manifest, records, interrupted=False):
              "Notas de qualidade não são calculadas automaticamente; revisar as respostas e o suporte das citações.", "",
              "## Resumo por método", "", "```json", json.dumps(summaries, ensure_ascii=False, indent=2), "```", ""]
     for r in records:
-        lines += [f"## {r['id']} — {r['mode']}", "", "### Pergunta", "", r["question"], "",
-                  "### Esperado", "", r["expected"], "", "### Respondido", "",
+        lines += [f"## {r['id']} — {r['mode']} ({r['question_format']})", "", "### Pergunta", "", r["question"], ""]
+        if r.get("choices"):
+            lines += ["**Alternativas:**", ""]
+            lines += [f"- {letter}) {text}" for letter, text in r["choices"].items()]
+            lines.append("")
+        lines += ["### Esperado", "", r["expected"], ""]
+        if r.get("expected_option"):
+            lines += [f"**Alternativa correta:** {r['expected_option']} — {r['choices'][r['expected_option']]}", ""]
+        lines += ["### Respondido", "",
                   r.get("answer", "ERRO: " + r.get("error", "")), ""]
+        if r["question_format"] == "multiple_choice" and "answer" in r:
+            status = "não interpretada" if r.get("choice") is None else ("correta" if r["is_correct"] else "incorreta")
+            lines += [f"**Alternativa extraída:** {r.get('choice') or '—'} ({status})", ""]
         if r.get("retrieval_seconds") is not None:
             lines += [f"Recuperação: {r['retrieval_seconds']:.3f}s. Geração: {r.get('timing', {}).get('wall_seconds', 0):.1f}s.", ""]
         if r.get("retrieval_error"):
@@ -153,7 +196,9 @@ def parser():
     p.add_argument("--url", default="http://127.0.0.1:11434", help="Ollama para geração")
     p.add_argument("--qdrant", default="http://127.0.0.1:6333")
     p.add_argument("--collection", help="coleção Qdrant já indexada; exigida para modos RAG")
-    p.add_argument("--mode", choices=("baseline", "words", "semantic", "hybrid", "all"), default="baseline")
+    p.add_argument("--mode", choices=("baseline", "semantic", "all"), default="baseline")
+    p.add_argument("--format", choices=("benchmark", "open", "multiple-choice", "both"), default="benchmark",
+                   help="benchmark respeita tipo de cada caso; both também repete casos MC como resposta aberta")
     p.add_argument("--output", type=Path, help="diretório novo; padrão results/<horário>")
     p.add_argument("--limit", type=int, help="primeiras N perguntas")
     p.add_argument("--case", action="append", default=[], help="ID específico; repetível")
@@ -177,7 +222,7 @@ def main(argv=None):
             p.error(f"{name} deve ser positivo")
     if args.temperature < 0:
         p.error("temperature não pode ser negativa")
-    modes = (["raw_baseline", "words", "semantic", "hybrid"] if args.mode == "all"
+    modes = (["raw_baseline", "semantic"] if args.mode == "all"
              else ["raw_baseline" if args.mode == "baseline" else args.mode])
     retrieval_modes = [mode for mode in modes if mode != "raw_baseline"]
     if retrieval_modes and not args.collection:
@@ -191,6 +236,9 @@ def main(argv=None):
         for field in ("id", "question", "reference_answer"):
             if not isinstance(c.get(field), str) or not c[field].strip():
                 raise ValueError(f"Caso sem campo válido: {field}")
+        if "choices" in c:
+            if not isinstance(c["choices"], dict) or list(c["choices"]) != ["A", "B", "C", "D"] or c.get("correct_option") not in c["choices"]:
+                raise ValueError(f"Alternativas inválidas no caso {c['id']}")
     if len({c["id"] for c in cases}) != len(cases):
         raise ValueError("IDs duplicados no benchmark")
     if args.case:
@@ -200,6 +248,24 @@ def main(argv=None):
         cases = [c for c in cases if c["id"] in args.case]
     if args.limit:
         cases = cases[:args.limit]
+
+    formats_by_case = {}
+    for case in cases:
+        has_choices = "choices" in case
+        if args.format == "benchmark":
+            formats_by_case[case["id"]] = ["multiple_choice" if has_choices else "open"]
+        elif args.format == "open":
+            formats_by_case[case["id"]] = ["open"]
+        elif args.format == "multiple-choice":
+            formats_by_case[case["id"]] = ["multiple_choice"] if has_choices else []
+        else:
+            formats_by_case[case["id"]] = ["open", "multiple_choice"] if has_choices else ["open"]
+    if not any(formats_by_case.values()):
+        p.error("nenhuma das perguntas selecionadas tem alternativas para múltipla escolha")
+    format_counts = {
+        question_format: sum(question_format in formats for formats in formats_by_case.values())
+        for question_format in ("open", "multiple_choice")
+    }
 
     tags = request_json(args.url, "/api/tags", timeout=10).get("models", [])
     available = {m["name"]: m for m in tags}
@@ -215,11 +281,12 @@ def main(argv=None):
         "benchmark_sha256": sha(args.benchmark), "benchmark_path": str(args.benchmark.resolve()),
         "runner_sha256": sha(Path(__file__)), "model": args.model,
         "model_metadata": available[args.model], "case_ids": [c["id"] for c in cases],
+        "format_counts": format_counts,
         "collection": args.collection if retrieval_modes else None,
         "collection_snapshot": None, "options": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
         "baseline": "somente pergunta do benchmark; sem system adicional, contexto, busca, gabarito ou histórico",
         "rag_prompt": RAG_SYSTEM if retrieval_modes else None,
-        "retrieval_modes": {"words": "Qdrant BM25", "semantic": "Qdrant dense cosine", "hybrid": "Qdrant RRF"} if retrieval_modes else None,
+        "retrieval_modes": {"semantic": "Qdrant dense cosine"} if retrieval_modes else None,
         "judge": None,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -229,35 +296,50 @@ def main(argv=None):
         with (output / "answers.jsonl").open("a", encoding="utf-8") as stream:
             for case in cases:
                 for mode in modes:
-                    label = "modelo sem contexto adicional" if mode == "raw_baseline" else f"RAG {mode}"
-                    print(f"\n{'=' * 65}\n{case['id']} [{label}]\nPERGUNTA: {case['question']}\nESPERADO: {case['reference_answer']}", flush=True)
-                    r = {"id": case["id"], "mode": mode, "question": case["question"],
-                         "expected": case["reference_answer"]}
-                    try:
-                        hits = []
-                        if mode != "raw_baseline":
-                            start = time.perf_counter()
-                            metadata, hits = hybrid_search.search_points(
-                                args.qdrant, args.url, args.collection, case["question"], mode, args.top_k)
-                            r["retrieval_seconds"] = time.perf_counter() - start
-                            r["hits"] = hits
-                            if manifest["collection_snapshot"] is None:
-                                manifest["collection_snapshot"] = metadata["source"]
-                                (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                        r["request"] = generation_payload(args, case["question"], mode, hits)
-                        r["answer"], r["thinking"], r["timing"] = chat(args, r["request"])
-                        print(f"RESPONDIDO: {r['answer']}\nTempo: {r['timing']['wall_seconds']:.1f}s", flush=True)
-                        if mode != "raw_baseline":
-                            print("TRECHOS: " + ", ".join(str(h.get("payload", {}).get("chunk_id", h.get("id"))) for h in hits), flush=True)
-                        if r["timing"].get("done_reason") == "length":
-                            print("AVISO: limite de geração atingido; resposta pode estar incompleta.", flush=True)
-                    except (RuntimeError, ValueError, KeyError, TypeError) as exc:
-                        r["error"] = str(exc)
-                        print(f"ERRO: {exc}", flush=True)
-                    records.append(r)
-                    stream.write(json.dumps(r, ensure_ascii=False) + "\n")
-                    stream.flush()
-                    render_report(output, manifest, records)
+                    for question_format in formats_by_case[case["id"]]:
+                        label = "modelo sem contexto adicional" if mode == "raw_baseline" else f"RAG {mode}"
+                        expected = (case["choices"][case["correct_option"]]
+                                    if question_format == "multiple_choice" else case["reference_answer"])
+                        if question_format == "multiple_choice":
+                            expected = f"{case['correct_option']}) {expected}"
+                        print(f"\n{'=' * 65}\n{case['id']} [{label} | {question_format}]\nPERGUNTA: {case['question']}\nESPERADO: {expected}", flush=True)
+                        r = {"id": case["id"], "mode": mode, "question_format": question_format,
+                             "question": case["question"], "expected": expected}
+                        if question_format == "multiple_choice":
+                            r["choices"] = case["choices"]
+                            r["expected_option"] = case["correct_option"]
+                        try:
+                            total_start = time.perf_counter()
+                            hits = []
+                            if mode != "raw_baseline":
+                                start = time.perf_counter()
+                                metadata, hits = hybrid_search.search_points(
+                                    args.qdrant, args.url, args.collection, case["question"], args.top_k)
+                                r["retrieval_seconds"] = time.perf_counter() - start
+                                r["hits"] = hits
+                                if manifest["collection_snapshot"] is None:
+                                    manifest["collection_snapshot"] = metadata["source"]
+                                    manifest["embedding"] = metadata["embedding"]
+                                    (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                            r["request"] = generation_payload(args, case, mode, hits, question_format)
+                            r["answer"], r["thinking"], r["timing"] = chat(args, r["request"])
+                            r["end_to_end_seconds"] = time.perf_counter() - total_start
+                            print(f"RESPONDIDO: {r['answer']}\nTempo: {r['timing']['wall_seconds']:.1f}s", flush=True)
+                            if question_format == "multiple_choice":
+                                r["choice"] = parse_choice(r["answer"])
+                                r["is_correct"] = r["choice"] == case["correct_option"] if r["choice"] else None
+                                print(f"ALTERNATIVA: {r['choice'] or 'não identificada'} | {'correta' if r['is_correct'] is True else 'incorreta' if r['is_correct'] is False else 'sem pontuação'}", flush=True)
+                            if mode != "raw_baseline":
+                                print("TRECHOS: " + ", ".join(str(h.get("payload", {}).get("chunk_id", h.get("id"))) for h in hits), flush=True)
+                            if r["timing"].get("done_reason") == "length":
+                                print("AVISO: limite de geração atingido; resposta pode estar incompleta.", flush=True)
+                        except (RuntimeError, ValueError, KeyError, TypeError) as exc:
+                            r["error"] = str(exc)
+                            print(f"ERRO: {exc}", flush=True)
+                        records.append(r)
+                        stream.write(json.dumps(r, ensure_ascii=False) + "\n")
+                        stream.flush()
+                        render_report(output, manifest, records)
     except KeyboardInterrupt:
         interrupted = True
         print("\nInterrompido; resultados concluídos foram preservados.", flush=True)

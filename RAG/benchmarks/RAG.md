@@ -1,5 +1,7 @@
 # Benchmark RAG — 30 perguntas
 
+Formato misto: 20 perguntas abertas e 10 de múltipla escolha. A letra correta é gabarito; não a envie ao modelo.
+
 Gabarito do avaliador: não incluir este arquivo no índice nem nos prompts do sistema avaliado.
 
 Fontes: `evidence.json`. Protocolo e métricas: `README.md`.
@@ -7,6 +9,14 @@ Fontes: `evidence.json`. Protocolo e métricas: `README.md`.
 ## R01 — resultado_condicional
 
 No DustAI, quais foram os coeficientes de Pearson antes e depois da calibração para MP10 e MP2,5, no cenário com duas semanas de dados? Identifique o cenário para não confundi-lo com todas as coletas do estudo.
+
+**Alternativas:**
+- A) MP10 passou de 0,69 para 0,79 e MP2,5 de 0,48 para 0,74.
+- B) MP10 passou de 0,48 para 0,74 e MP2,5 de 0,69 para 0,79, mas esses números são uma média geral sem condição de duração.
+- C) Na calibração com duas semanas de dados, MP10 passou de 0,48 para 0,74 e MP2,5 de 0,69 para 0,79.
+- D) Na calibração com duas semanas, MP10 passou de 0,48 para 0,79 e MP2,5 de 0,69 para 0,74.
+
+**Gabarito MC:** C
 
 **Resposta de referência:** No cenário de calibração com duas semanas de dados, o Pearson de MP10 passou de 0,48 a 0,74 e o de MP2,5, de 0,69 a 0,79.
 
@@ -43,6 +53,14 @@ A partir do resultado de duas semanas do DustAI, calcule a redução percentual 
 
 Como o DustAI transporta as medições e onde realiza a calibração? Quais fatores ambientais motivam esse processamento? Separe comunicação, processamento e influência ambiental.
 
+**Alternativas:**
+- A) LoRaWAN é o algoritmo de calibração executado no sensor; temperatura e umidade são variáveis de saída.
+- B) As medições seguem pela Internet via LoRaWAN; modelos de AM na nuvem fazem a calibração, motivada também pela influência de temperatura e umidade nas leituras.
+- C) Os dados seguem por Wi-Fi e a calibração ocorre exclusivamente dentro do sensor; apenas pressão atmosférica altera as leituras.
+- D) Bluetooth transmite os dados e um servidor remoto apenas os arquiva; a umidade não afeta os sensores.
+
+**Gabarito MC:** B
+
 **Resposta de referência:** O transporte usa LoRaWAN para levar as medições à Internet. A calibração usa modelos de AM na nuvem, buscando corrigir leituras influenciadas, entre outros fatores, por temperatura e umidade.
 
 **Itens avaliados:**
@@ -77,6 +95,14 @@ Na comparação DustAI–BAM 1020, por que o maior número de leituras válidas 
 ## R05 — mecanismo
 
 O que o PersonaReAct acrescenta ao ReAct, em qual ponto do fluxo e com qual informação do usuário? Ele substitui o ciclo de raciocínio e ação?
+
+**Alternativas:**
+- A) Um fine-tuning dos pesos antes do ReAct, que substitui o ciclo de raciocínio e ação.
+- B) Um retriever de documentos que personaliza a pergunta antes de iniciar o ReAct.
+- C) Um guardrail que escolhe ferramentas e remove a etapa de ação conforme a idade do usuário.
+- D) A função Tailor adapta a resposta final ao perfil funcional do usuário, preservando o ciclo original de raciocínio e ação.
+
+**Gabarito MC:** D
 
 **Resposta de referência:** O Tailor adapta a resposta final ao perfil funcional do usuário. É uma etapa adicional de personalização; o ciclo original de raciocínio e ação do ReAct é preservado.
 
@@ -132,6 +158,14 @@ Como o Experimento 2 do PersonaReAct tenta separar o efeito do perfil do efeito 
 
 Sobre o SAAL, o resumo dos metadados e o texto do resumo no corpus dão a mesma contagem de subcaracterísticas e recomendações? Apresente ambas e explique se é possível declarar uma única contagem definitiva apenas com essas duas evidências.
 
+**Alternativas:**
+- A) Não: metadados indicam 10 subcaracterísticas e 55 recomendações; o texto indica 10 principais, 7 secundárias e 48 recomendações. As evidências não resolvem qual contagem é definitiva.
+- B) Sim: ambas as fontes informam exatamente 10 subcaracterísticas e 55 recomendações.
+- C) Não: basta somar 48 recomendações a 7 subcaracterísticas secundárias para confirmar 55 recomendações.
+- D) Não: os metadados indicam 48 recomendações e o texto indica 55; portanto o texto é necessariamente a versão mais recente.
+
+**Gabarito MC:** A
+
 **Resposta de referência:** Não coincidem: os metadados mencionam 10 subcaracterísticas e 55 recomendações; o resumo processado menciona 10 principais, 7 secundárias e 48 recomendações. Essas evidências não permitem decidir a contagem definitiva nem inferir automaticamente uma mudança de versão.
 
 **Itens avaliados:**
@@ -166,6 +200,14 @@ No SAAL, que métodos apoiaram a construção do catálogo, qual representação
 ## R10 — dados_e_metodos
 
 No sistema de recomendação para nutrição oncológica, quais são as duas abordagens computacionais e como são obtidos os perfis dos pacientes usados na proposta? Qual é o papel do profissional de nutrição?
+
+**Alternativas:**
+- A) O sistema usa redes profundas em prontuários reais e substitui a decisão do nutricionista.
+- B) Usa TOPSIS e NSGA-II sobre perfis clínicos reais; os resultados validam prescrição autônoma sem profissional.
+- C) Usa TOPSIS e NSGA-II, dados nutricionais de alimentos e perfis sintéticos/hipotéticos; a proposta complementa o trabalho do profissional.
+- D) Usa apenas TOPSIS em dados genéricos, sem metas nutricionais ou participação de profissionais.
+
+**Gabarito MC:** C
 
 **Resposta de referência:** O sistema usa TOPSIS e NSGA-II, combinando dados nutricionais dos alimentos com perfis de pacientes gerados sinteticamente. A proposta complementa o trabalho dos profissionais de nutrição.
 
@@ -202,6 +244,14 @@ O fato de o sistema de nutrição oncológica gerar dietas que atendem metas e r
 ## R12 — resultado_condicional
 
 Na tese sobre VFC e estágios de COVID-19, qual foi o algoritmo principal e quais foram os dois valores de desempenho apresentados no resumo? Que informação adicional distingue os dois cenários?
+
+**Alternativas:**
+- A) SVM: 77% em geral e 96,7% em todos os casos, sem depender de informação clínica adicional.
+- B) Árvore de decisão: 77% no cenário geral e 96,7% quando havia informação sobre infecção recente por COVID-19.
+- C) Árvore de decisão: 96,7% no cenário geral e 77% quando havia informação sobre infecção recente.
+- D) CNN: 77% sem VFC e 96,7% após validação prospectiva em pacientes novos.
+
+**Gabarito MC:** B
 
 **Resposta de referência:** O resumo seleciona árvore de decisão e relata 77% em geral, chegando a 96,7% quando há informação de infecção recente. A terminologia 'precisão' no resumo em português e 'accuracy' no inglês deve ser preservada com cautela, sem inferir precision técnica.
 
@@ -256,6 +306,14 @@ Na tese de VFC/COVID-19, quais estados de saúde são investigados e como os dad
 ## R15 — dados_experimentais
 
 Na dissertação de estratégias híbridas para preços de ações na B3, qual foi a fonte dos dados, o intervalo temporal e a frequência de amostragem? Que três representações foram usadas para alimentar CNNs?
+
+**Alternativas:**
+- A) Dados do investing.com, de 2013 a 2023, em frequência diária; representações em blocos, gráficos de linhas e gráficos de velas.
+- B) Dados do Yahoo Finance, de 2013 a 2023, em frequência diária; imagens de blocos, linhas, velas e barras.
+- C) Dados do investing.com, de 2020 a 2023, em frequência mensal; representações em texto, áudio e velas.
+- D) Dados da B3 obtidos em tempo real em 2026; frequências diárias e imagens exclusivamente de candlestick.
+
+**Gabarito MC:** A
 
 **Resposta de referência:** Os dados vieram do investing.com, de 2013 a 2023, em frequência diária. Para CNNs foram construídas representações em blocos, linhas e velas.
 
@@ -346,6 +404,14 @@ No estudo de Didelphis aurita e T. cruzi, qual é o período e o tamanho aproxim
 
 Na Tabela 1 de massa corporal de D. aurita, use as contagens por sexo e status para calcular o total de indivíduos, o total positivo e a fração positiva nesse subconjunto. Não chame essa fração de prevalência de toda a Mata Atlântica.
 
+**Alternativas:**
+- A) Total 462, positivos 254 e fração positiva de aproximadamente 54,98%.
+- B) Total 462, positivos 198 e fração positiva de 19,8%.
+- C) Total 3.000, positivos 198 e fração positiva de 6,6% para toda a Mata Atlântica.
+- D) Total 462, positivos 198 e fração positiva de aproximadamente 42,86%, restrita ao subconjunto da tabela.
+
+**Gabarito MC:** D
+
 **Resposta de referência:** O total é 131 + 133 + 123 + 75 = 462; os positivos são 198. A fração é 42,86% nesse subconjunto, não uma estimativa automaticamente representativa de todo o bioma.
 
 **Itens avaliados:**
@@ -416,6 +482,14 @@ A pesquisa de ATA concluiu que os docentes não usavam tecnologias digitais? Qua
 ## R24 — comparacao_multidocumental
 
 Compare DustAI e o sistema de VFC/COVID-19 como sistemas de sensoriamento com processamento remoto: variável observada, comunicação/interface explicitada e tarefa do modelo. Não suponha que ambos usam LoRaWAN.
+
+**Alternativas:**
+- A) Ambos medem material particulado por LoRaWAN e usam o modelo para calibrar PM10.
+- B) DustAI diagnostica COVID por VFC em oxímetro; o outro sistema mede partículas com calibração LoRaWAN.
+- C) DustAI mede partículas, transmite via LoRaWAN e calibra com AM na nuvem; a tese de COVID usa VFC de oxímetro, servidor remoto e interface web, sem evidência aqui de LoRaWAN nesse sistema.
+- D) Os dois estudos especificam Wi-Fi, interface móvel e o mesmo algoritmo de classificação clínica.
+
+**Gabarito MC:** C
 
 **Resposta de referência:** DustAI calibra medições de partículas, transmitidas por LoRaWAN, com AM na nuvem. A tese de COVID usa VFC de oxímetro enviada a servidor remoto e monitoramento web para investigar estados de saúde. Não há base nesses trechos para transferir LoRaWAN ao segundo projeto.
 
@@ -488,6 +562,14 @@ DustAI e a dissertação sobre ações usam Pearson e métricas de erro. Compare
 ## R28 — informacao_nao_demonstrada
 
 Com base no experimento de VFC/COVID-19, qual é o desempenho garantido para um paciente novo em 2026, independentemente de histórico de infecção, dispositivo e população? Se os resultados não sustentam esse número, explique o limite sem deixar de relatar o que foi medido.
+
+**Alternativas:**
+- A) 96,7% garantidos para qualquer paciente novo, pois o valor condicionado substitui o resultado geral.
+- B) Não há garantia universal para paciente novo: o resumo relata 77% em geral e 96,7% condicionado à informação sobre infecção recente.
+- C) Não há nenhum resultado quantitativo relatado para o experimento.
+- D) 77% é o resultado condicionado à informação recente e 96,7% é a garantia geral para 2026.
+
+**Gabarito MC:** B
 
 **Resposta de referência:** Não é possível fornecer essa garantia. O resumo relata 77% e 96,7% sob condições distintas; isso não demonstra desempenho independente de população, dispositivo e histórico para um paciente novo.
 
