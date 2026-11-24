@@ -117,6 +117,27 @@ revisão humana. Não concluir que um método é melhor somente por produzir tex
 com o gabarito; conferir os `required_claims`, erros críticos e evidências citadas em
 `benchmarks/rag.json` / `benchmarks/evidence.json`.
 
+### Fidelidade com RAGAS + revisão humana
+
+Depois do benchmark, avalie `Faithfulness` somente nas respostas abertas com RAG. O script
+usa o contexto efetivamente enviado ao gerador, ignora baseline, múltipla escolha e casos sem
+trechos. Configure `OPENAI_API_KEY`; opcionalmente `OPENAI_BASE_URL` para um endpoint compatível
+e `RAGAS_MODEL` (padrão `gpt-4o-mini`). `uv` instala RAGAS e o cliente OpenAI pelo cabeçalho
+de dependências do script:
+
+```bash
+OPENAI_API_KEY="..." RAGAS_MODEL="gpt-4o-mini" \
+  uv run evaluate_ragas.py \
+  --answers results/<execução>/answers.jsonl
+```
+
+Gera `ragas_human_review.csv` ao lado de `answers.jsonl`, com uma coluna para nota humana
+e outra para observações. Revise as notas antes de reportar: Faithfulness mede suporte nos
+trechos, não correção ou completude. O provedor recebe pergunta, resposta e contexto; não
+envie dados sem autorização institucional. O custo/latência do juiz fica fora das métricas
+do pipeline. A acurácia das fechadas continua sendo calculada pelo runner; questões abertas
+e baseline continuam exigindo revisão humana.
+
 O `manifest.json` registra hash/configuração do benchmark, modelo, coleção e snapshot R2
 efetivamente usado. Não misture execuções de coleções/snapshots diferentes. Um erro de busca
 é gravado para aquele caso/método; o runner continua os outros casos.
